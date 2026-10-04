@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.izzet.suhaambalaj.ui.theme.SuhaAmbalajTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -200,12 +202,21 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
     }
 }
 
+// Bunu dosyanın en üstündeki diğer importların arasına eklemeyi unutma:
+
+
 @Composable
 fun KayitEkrani(geriyeDon: () -> Unit, kaydiTamamla: () -> Unit) {
     var dukkanAdi by remember { mutableStateOf("") }
     var yetkiliAdi by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
     var konumAlindi by remember { mutableStateOf(false) }
+
+    // Ağ işlemleri için Coroutine kapsamı
+    val coroutineScope = rememberCoroutineScope()
+    // Yüklenme animasyonu ve sonuç mesajı için değişkenler
+    var yukleniyor by remember { mutableStateOf(false) }
+    var sonucMesaji by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -216,27 +227,21 @@ fun KayitEkrani(geriyeDon: () -> Unit, kaydiTamamla: () -> Unit) {
         Text("Sipariş verebilmek için yönetici onayı gereklidir.", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(bottom = 32.dp))
 
         OutlinedTextField(
-            value = dukkanAdi,
-            onValueChange = { dukkanAdi = it },
-            label = { Text("Dükkan / İşletme Adı (Opsiyonel)") }, // Opsiyonel olduğu belirtildi
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true
+            value = dukkanAdi, onValueChange = { dukkanAdi = it },
+            label = { Text("Dükkan / İşletme Adı (Opsiyonel)") },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
         OutlinedTextField(
-            value = yetkiliAdi,
-            onValueChange = { yetkiliAdi = it },
+            value = yetkiliAdi, onValueChange = { yetkiliAdi = it },
             label = { Text("Yetkili Adı Soyadı") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
         OutlinedTextField(
-            value = telefon,
-            onValueChange = { telefon = it },
+            value = telefon, onValueChange = { telefon = it },
             label = { Text("Telefon Numarası") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-            singleLine = true
+            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), singleLine = true
         )
 
         Button(
@@ -247,14 +252,51 @@ fun KayitEkrani(geriyeDon: () -> Unit, kaydiTamamla: () -> Unit) {
             Text(if (konumAlindi) "📍 Konum Kaydedildi ✓" else "📍 Sipariş Teslim Konumumu Al", fontWeight = FontWeight.Bold)
         }
 
+        // --- API BAĞLANTILI GÖNDER BUTONU ---
         Button(
-            onClick = { kaydiTamamla() },
+            onClick = {
+                yukleniyor = true
+                sonucMesaji = ""
+
+                // Arka planda ağ isteği başlatıyoruz
+                coroutineScope.launch {
+                    try {
+                        // GPS entegrasyonuna kadar geçici koordinatlar (Örn: Adana civarı)
+                        val istek = KayitIstegi(
+                            dukkanAdi = dukkanAdi,
+                            yetkiliAdi = yetkiliAdi,
+                            telefon = telefon,
+                            enlem = 37.0,
+                            boylam = 35.32
+                        )
+
+                        // ApiService üzerinden Node.js'e veriyi fırlat
+                        val cevap = ApiClient.retrofitService.musteriKaydet(istek)
+
+                        if (cevap.basarili) {
+                            sonucMesaji = "Kayıt Başarılı! Onay Bekleniyor."
+                            delay(2000) // Mesajı 2 saniye gösterip sepeti boşaltır
+                            kaydiTamamla()
+                        } else {
+                            sonucMesaji = "Hata: ${cevap.mesaj}"
+                        }
+                    } catch (e: Exception) {
+                        sonucMesaji = "Sunucuya ulaşılamadı! Arka plan (Node.js) kapalı olabilir."
+                    } finally {
+                        yukleniyor = false
+                    }
+                }
+            },
             modifier = Modifier.fillMaxWidth().height(55.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-            // Dükkan adı kuralı kaldırıldı, artık yetkili adı, telefon ve konum yeterli
-            enabled = yetkiliAdi.isNotEmpty() && telefon.isNotEmpty() && konumAlindi
+            enabled = yetkiliAdi.isNotEmpty() && telefon.isNotEmpty() && konumAlindi && !yukleniyor
         ) {
-            Text("Kayıt Ol ve Onaya Gönder", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(if (yukleniyor) "Gönderiliyor..." else "Kayıt Ol ve Onaya Gönder", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // Sonuç veya Hata Mesajını Gösterme Alanı
+        if (sonucMesaji.isNotEmpty()) {
+            Text(text = sonucMesaji, color = if (sonucMesaji.contains("Başarılı")) Color(0xFF10B981) else Color.Red, modifier = Modifier.padding(top = 16.dp), fontWeight = FontWeight.Bold)
         }
 
         TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(top = 16.dp)) {
