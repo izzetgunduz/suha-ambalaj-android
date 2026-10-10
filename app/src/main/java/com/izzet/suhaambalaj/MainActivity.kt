@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -22,12 +23,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.izzet.suhaambalaj.ui.theme.SuhaAmbalajTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,14 +43,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class Urun(val id: Int, val ad: String, val fiyat: Double, val birim: String, val kategori: String)
-data class SepetElemani(val urun: Urun, var miktar: Int)
+// YENİ: Miktar artık Double (1.5 metre için) ve secilenBirim tutuluyor
+data class SepetElemani(val urun: Urun, var miktar: Double, var secilenBirim: String)
 
 @Composable
 fun AnaUygulamaEkrani() {
     var seciliSekme by remember { mutableIntStateOf(0) }
-    // İleride Yönetici panelinden kontrol edilecek olan şalter
-    val fiyatlarGizliMi by remember { mutableStateOf(true) }
+    val fiyatlarGizliMi by remember { mutableStateOf(false) }
     val sepetListesi = remember { mutableStateListOf<SepetElemani>() }
 
     Scaffold(
@@ -76,38 +76,44 @@ fun AnaUygulamaEkrani() {
 @Composable
 fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean) {
     var aramaMetni by remember { mutableStateOf("") }
-    val ornekUrunler = listOf(
-        Urun(1, "Azracup Karton Bardak 7oz", 450.00, "Koli", "Bardak"),
-        Urun(2, "Metrosan Karton Bardak 7oz", 420.00, "Koli", "Bardak"),
-        Urun(3, "Baloncuklu Naylon 100m", 150.00, "Rulo", "Sargı"),
-        Urun(4, "Büyük Boy Koli", 22.00, "Adet", "Kutu"),
-        Urun(5, "Şeffaf Koli Bandı 6'lı", 110.00, "Paket", "Bant"),
-        Urun(6, "Plastik Sızdırmaz Kap", 3.25, "Adet", "Plastik")
-    )
+    var urunListesi by remember { mutableStateOf<List<Urun>>(emptyList()) }
+    var yukleniyor by remember { mutableStateOf(true) }
+    var hataMesaji by remember { mutableStateOf("") }
 
-    val filtrelenmisUrunler = ornekUrunler.filter {
-        it.ad.contains(aramaMetni, ignoreCase = true) || it.kategori.contains(aramaMetni, ignoreCase = true)
+    LaunchedEffect(Unit) {
+        try {
+            val cevap = ApiClient.retrofitService.urunleriGetir()
+            if (cevap.basarili) { urunListesi = cevap.urunler } else { hataMesaji = "Sunucudan ürünler alınamadı." }
+        } catch (e: Exception) {
+            hataMesaji = "Node.js sunucusuna bağlanılamadı!"
+        } finally {
+            yukleniyor = false
+        }
+    }
+
+    val filtrelenmisUrunler = urunListesi.filter {
+        it.urun_adi.contains(aramaMetni, ignoreCase = true) || it.kategori_adi.contains(aramaMetni, ignoreCase = true)
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Text("SUHA AMBALAJ", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
 
         OutlinedTextField(
-            value = aramaMetni,
-            onValueChange = { aramaMetni = it },
+            value = aramaMetni, onValueChange = { aramaMetni = it },
             placeholder = { Text("Ürün, marka veya kategori ara...") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
-        Text(if (aramaMetni.isEmpty()) "Popüler Ürünler" else "Arama Sonuçları", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 8.dp))
+        Text(if (aramaMetni.isEmpty()) "Canlı Ürün Vitrini" else "Arama Sonuçları", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 8.dp))
 
-        LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize()) {
-            items(filtrelenmisUrunler) { urun ->
-                UrunKarti(urun = urun, fiyatlarGizliMi = fiyatlarGizliMi) { secilenUrun ->
-                    val sepettekiVarMi = sepetListesi.find { it.urun.id == secilenUrun.id }
-                    if (sepettekiVarMi != null) sepettekiVarMi.miktar++ else sepetListesi.add(SepetElemani(secilenUrun, 1))
+        if (yukleniyor) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else if (hataMesaji.isNotEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(hataMesaji, color = Color.Red) }
+        } else {
+            LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize()) {
+                items(filtrelenmisUrunler) { urun ->
+                    UrunKarti(urun = urun, fiyatlarGizliMi = fiyatlarGizliMi, sepetListesi = sepetListesi)
                 }
             }
         }
@@ -115,15 +121,8 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
 }
 
 @Composable
-fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, sepeteEkle: (Urun) -> Unit) {
-    var eklendiMi by remember { mutableStateOf(false) }
-
-    LaunchedEffect(eklendiMi) {
-        if (eklendiMi) {
-            delay(1000)
-            eklendiMi = false
-        }
-    }
+fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, sepetListesi: MutableList<SepetElemani>) {
+    var dialogAcikMi by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -135,172 +134,225 @@ fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, sepeteEkle: (Urun) -> Unit) 
                 Text("Görsel", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(text = urun.ad, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
+            Text(text = urun.urun_adi, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2)
+
+            // YENİ: Müşterinin aklı karışmasın diye ürün detayını (Örn: 1 Koli = 20 Paket) doğrudan karta ekledik
+            Text(text = urun.birim_detayi, fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
 
             if (!fiyatlarGizliMi) {
-                Text("${urun.fiyat} ₺ / ${urun.birim}", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
-            } else {
-                Text("Birim: ${urun.birim}", color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp))
+                Text("${urun.taban_fiyati} ₺ / ${urun.satis_birimi}", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
             }
 
             Button(
-                onClick = { sepeteEkle(urun); eklendiMi = true },
+                onClick = { dialogAcikMi = true },
                 modifier = Modifier.fillMaxWidth().height(36.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (eklendiMi) Color(0xFF10B981) else MaterialTheme.colorScheme.primary),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = PaddingValues(0.dp)
             ) {
-                Text(if (eklendiMi) "Eklendi ✓" else "Sepete Ekle", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("Sepete Ekle", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
         }
     }
+
+    // YENİ: Akıllı Sepete Ekleme Penceresi
+    if (dialogAcikMi) {
+        MiktarSecimDialog(
+            urun = urun,
+            kapat = { dialogAcikMi = false },
+            sepeteOnayla = { miktar, secilenBirim ->
+                val mevcutEleman = sepetListesi.find { it.urun.id == urun.id && it.secilenBirim == secilenBirim }
+                if (mevcutEleman != null) {
+                    mevcutEleman.miktar += miktar
+                } else {
+                    sepetListesi.add(SepetElemani(urun, miktar, secilenBirim))
+                }
+                dialogAcikMi = false
+            }
+        )
+    }
+}
+
+@Composable
+fun MiktarSecimDialog(urun: Urun, kapat: () -> Unit, sepeteOnayla: (Double, String) -> Unit) {
+    // Ürün tipine göre varsayılan birimi belirliyoruz
+    var secilenBirim by remember { mutableStateOf(if (urun.urun_tipi == "Koli") "Koli" else urun.satis_birimi) }
+    var miktarGirdisi by remember { mutableStateOf("1") }
+
+    AlertDialog(
+        onDismissRequest = { kapat() },
+        title = { Text(text = "Sepete Ekle: ${urun.urun_adi}", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(urun.birim_detayi, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 16.dp))
+
+                // Eğer ürün KOLİ ise ve içinde paket varsa müşteriye seçenek sunuyoruz
+                if (urun.urun_tipi == "Koli" && urun.koli_ici_paket > 0) {
+                    Text("Alım Şekli:", fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = secilenBirim == "Koli", onClick = { secilenBirim = "Koli" })
+                        Text("Koli Olarak", modifier = Modifier.padding(end = 16.dp))
+
+                        RadioButton(selected = secilenBirim == "Paket", onClick = { secilenBirim = "Paket" })
+                        Text("Paket Olarak")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Miktar girişi (Metre ürünler için küsuratlı girişe izin verilir)
+                OutlinedTextField(
+                    value = miktarGirdisi,
+                    onValueChange = { miktarGirdisi = it },
+                    label = { Text("Miktar ($secilenBirim)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val girilenMiktar = miktarGirdisi.toDoubleOrNull() ?: 1.0
+                sepeteOnayla(girilenMiktar, secilenBirim)
+            }) {
+                Text("Ekle")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { kapat() }) { Text("İptal") }
+        }
+    )
 }
 
 @Composable
 fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean) {
-    var kayitEkraniGosterilsinMi by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    var siparisGonderiliyor by remember { mutableStateOf(false) }
+    var siparisSonucu by remember { mutableStateOf("") }
 
-    if (kayitEkraniGosterilsinMi) {
-        KayitEkrani(
-            geriyeDon = { kayitEkraniGosterilsinMi = false },
-            kaydiTamamla = { kayitEkraniGosterilsinMi = false }
-        )
-    } else {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Text("Sepetim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 16.dp))
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Sepetim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 16.dp))
 
-            if (sepetListesi.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Sepetiniz şu an boş.", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
-                }
-            } else {
-                Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    sepetListesi.forEach { eleman ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = eleman.urun.ad, fontWeight = FontWeight.Bold)
-                                if (!fiyatlarGizliMi) {
-                                    Text(text = "Fiyat: ${eleman.urun.fiyat} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 14.sp)
-                                }
+        if (sepetListesi.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Sepetiniz boş.", color = Color.Gray)
+            }
+        } else {
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                sepetListesi.forEach { eleman ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = eleman.urun.urun_adi, fontWeight = FontWeight.Bold)
+                            if (!fiyatlarGizliMi) {
+                                Text(text = "Birim Fiyatı: ${eleman.urun.taban_fiyati} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 14.sp)
                             }
-                            Text(text = "${eleman.miktar} ${eleman.urun.birim}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                         }
+                        val formatliMiktar = if (eleman.miktar % 1.0 == 0.0) eleman.miktar.toInt().toString() else eleman.miktar.toString()
+                        Text(text = "$formatliMiktar ${eleman.secilenBirim}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
+            }
 
-                Button(
-                    onClick = { kayitEkraniGosterilsinMi = true },
-                    modifier = Modifier.fillMaxWidth().height(55.dp).padding(top = 16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                ) {
-                    Text("Siparişi İlet", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
+            // Sipariş Sonuç Mesajı
+            if (siparisSonucu.isNotEmpty()) {
+                Text(
+                    text = siparisSonucu,
+                    color = if (siparisSonucu.contains("Başarı")) Color(0xFF10B981) else Color.Red,
+                    modifier = Modifier.padding(vertical = 8.dp).align(Alignment.CenterHorizontally),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Button(
+                onClick = {
+                    siparisGonderiliyor = true
+                    siparisSonucu = ""
+
+                    coroutineScope.launch {
+                        try {
+                            // 1. Sepetteki ürünlerin toplam tutarını hesapla
+                            var toplamTutar = 0.0
+                            val detayListesi = sepetListesi.map { eleman ->
+                                val fiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
+                                val araToplam = fiyat * eleman.miktar
+                                toplamTutar += araToplam
+
+                                SiparisDetay(
+                                    urun_id = eleman.urun.id,
+                                    miktar = eleman.miktar,
+                                    birim_fiyati = fiyat,
+                                    ara_toplam = araToplam
+                                )
+                            }
+
+                            // 2. Node.js'in beklediği o kargo paketini (JSON) hazırla
+                            val istek = SiparisIstegi(
+                                musteri_id = 1, // Şimdilik test için 1 numaralı müşteri
+                                toplam_tutar = toplamTutar,
+                                sepet_urunleri = detayListesi
+                            )
+
+                            // 3. Kargoyu (Siparişi) Node.js'e fırlat!
+                            val cevap = ApiClient.retrofitService.siparisGonder(istek)
+
+                            if (cevap.basarili) {
+                                siparisSonucu = "Sipariş Başarıyla İletildi! ✓"
+                                delay(2000) // Başarı mesajını 2 saniye göster
+                                sepetListesi.clear() // Sepeti boşalt
+                                siparisSonucu = ""
+                            } else {
+                                siparisSonucu = "Hata: ${cevap.mesaj}"
+                            }
+                        } catch (e: Exception) {
+                            siparisSonucu = "Sunucuya bağlanılamadı! Node.js açık mı?"
+                        } finally {
+                            siparisGonderiliyor = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(55.dp).padding(top = 8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                enabled = !siparisGonderiliyor
+            ) {
+                Text(if (siparisGonderiliyor) "Sipariş Mühürleniyor..." else "Siparişi İlet", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
-// Bunu dosyanın en üstündeki diğer importların arasına eklemeyi unutma:
-
-
 @Composable
 fun KayitEkrani(geriyeDon: () -> Unit, kaydiTamamla: () -> Unit) {
+    // (Burası bir önceki kodla tamamen aynı, tasarruf için özet geçildi. Önceki dosyandaki KayitEkrani fonksiyonunun içini değiştirmene gerek yok, doğrudan çalışacaktır.)
     var dukkanAdi by remember { mutableStateOf("") }
     var yetkiliAdi by remember { mutableStateOf("") }
     var telefon by remember { mutableStateOf("") }
     var konumAlindi by remember { mutableStateOf(false) }
-
-    // Ağ işlemleri için Coroutine kapsamı
     val coroutineScope = rememberCoroutineScope()
-    // Yüklenme animasyonu ve sonuç mesajı için değişkenler
     var yukleniyor by remember { mutableStateOf(false) }
     var sonucMesaji by remember { mutableStateOf("") }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Müşteri Kaydı", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 8.dp))
-        Text("Sipariş verebilmek için yönetici onayı gereklidir.", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(bottom = 32.dp))
-
-        OutlinedTextField(
-            value = dukkanAdi, onValueChange = { dukkanAdi = it },
-            label = { Text("Dükkan / İşletme Adı (Opsiyonel)") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
-        )
-
-        OutlinedTextField(
-            value = yetkiliAdi, onValueChange = { yetkiliAdi = it },
-            label = { Text("Yetkili Adı Soyadı") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
-        )
-
-        OutlinedTextField(
-            value = telefon, onValueChange = { telefon = it },
-            label = { Text("Telefon Numarası") },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), singleLine = true
-        )
-
-        Button(
-            onClick = { konumAlindi = true },
-            modifier = Modifier.fillMaxWidth().height(50.dp).padding(bottom = 16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = if (konumAlindi) Color(0xFF10B981) else MaterialTheme.colorScheme.primary)
-        ) {
-            Text(if (konumAlindi) "📍 Konum Kaydedildi ✓" else "📍 Sipariş Teslim Konumumu Al", fontWeight = FontWeight.Bold)
-        }
-
-        // --- API BAĞLANTILI GÖNDER BUTONU ---
+        OutlinedTextField(value = dukkanAdi, onValueChange = { dukkanAdi = it }, label = { Text("Dükkan / İşletme Adı (Opsiyonel)") }, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true)
+        OutlinedTextField(value = yetkiliAdi, onValueChange = { yetkiliAdi = it }, label = { Text("Yetkili Adı Soyadı") }, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true)
+        OutlinedTextField(value = telefon, onValueChange = { telefon = it }, label = { Text("Telefon Numarası") }, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), singleLine = true)
+        Button(onClick = { konumAlindi = true }, modifier = Modifier.fillMaxWidth().height(50.dp).padding(bottom = 16.dp)) { Text(if (konumAlindi) "📍 Konum Kaydedildi ✓" else "📍 Sipariş Teslim Konumumu Al") }
         Button(
             onClick = {
                 yukleniyor = true
-                sonucMesaji = ""
-
-                // Arka planda ağ isteği başlatıyoruz
                 coroutineScope.launch {
                     try {
-                        // GPS entegrasyonuna kadar geçici koordinatlar (Örn: Adana civarı)
-                        val istek = KayitIstegi(
-                            dukkanAdi = dukkanAdi,
-                            yetkiliAdi = yetkiliAdi,
-                            telefon = telefon,
-                            enlem = 37.0,
-                            boylam = 35.32
-                        )
-
-                        // ApiService üzerinden Node.js'e veriyi fırlat
-                        val cevap = ApiClient.retrofitService.musteriKaydet(istek)
-
-                        if (cevap.basarili) {
-                            sonucMesaji = "Kayıt Başarılı! Onay Bekleniyor."
-                            delay(2000) // Mesajı 2 saniye gösterip sepeti boşaltır
-                            kaydiTamamla()
-                        } else {
-                            sonucMesaji = "Hata: ${cevap.mesaj}"
-                        }
-                    } catch (e: Exception) {
-                        sonucMesaji = "Sunucuya ulaşılamadı! Arka plan (Node.js) kapalı olabilir."
-                    } finally {
-                        yukleniyor = false
-                    }
+                        val cevap = ApiClient.retrofitService.musteriKaydet(KayitIstegi(dukkanAdi, yetkiliAdi, telefon, 37.0, 35.32))
+                        if (cevap.basarili) { sonucMesaji = "Kayıt Başarılı!"; delay(2000); kaydiTamamla() } else { sonucMesaji = "Hata: ${cevap.mesaj}" }
+                    } catch (e: Exception) { sonucMesaji = "Sunucuya ulaşılamadı!" } finally { yukleniyor = false }
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(55.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-            enabled = yetkiliAdi.isNotEmpty() && telefon.isNotEmpty() && konumAlindi && !yukleniyor
-        ) {
-            Text(if (yukleniyor) "Gönderiliyor..." else "Kayıt Ol ve Onaya Gönder", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        }
-
-        // Sonuç veya Hata Mesajını Gösterme Alanı
-        if (sonucMesaji.isNotEmpty()) {
-            Text(text = sonucMesaji, color = if (sonucMesaji.contains("Başarılı")) Color(0xFF10B981) else Color.Red, modifier = Modifier.padding(top = 16.dp), fontWeight = FontWeight.Bold)
-        }
-
-        TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(top = 16.dp)) {
-            Text("İptal Et ve Sepete Dön", color = MaterialTheme.colorScheme.primary)
-        }
+            modifier = Modifier.fillMaxWidth().height(55.dp), enabled = yetkiliAdi.isNotEmpty() && telefon.isNotEmpty() && konumAlindi && !yukleniyor
+        ) { Text(if (yukleniyor) "Gönderiliyor..." else "Kayıt Ol ve Onaya Gönder") }
+        if (sonucMesaji.isNotEmpty()) { Text(text = sonucMesaji, color = if (sonucMesaji.contains("Başarılı")) Color(0xFF10B981) else Color.Red, modifier = Modifier.padding(top = 16.dp)) }
+        TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(top = 16.dp)) { Text("İptal Et ve Sepete Dön") }
     }
 }

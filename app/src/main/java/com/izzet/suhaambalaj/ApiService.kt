@@ -3,9 +3,10 @@ package com.izzet.suhaambalaj
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
 
-// 1. Sunucuya Göndereceğimiz Müşteri Kayıt Paketi (JSON formatına dönüşecek)
+// 1. Müşteri Kayıt İstek/Cevap Kalıpları
 data class KayitIstegi(
     val dukkanAdi: String,
     val yetkiliAdi: String,
@@ -14,32 +15,66 @@ data class KayitIstegi(
     val boylam: Double
 )
 
-// 2. Sunucudan (Node.js) Bize Gelecek Cevap Paketi
 data class SunucuCevabi(
     val basarili: Boolean,
     val mesaj: String
 )
 
-// 3. API İsteklerimizi Tanımladığımız Arayüz
+// 2. Ürün Çekme İstek/Cevap Kalıpları
+data class UrunCevabi(
+    val basarili: Boolean,
+    val urun_sayisi: Int,
+    val urunler: List<Urun>
+)
+
+data class Urun(
+    val id: Int,
+    val urun_adi: String,
+    val marka: String,
+    val satis_birimi: String,
+    val birim_detayi: String,
+    val taban_fiyati: String,
+    val urun_tipi: String,
+    val koli_ici_paket: Int,
+    val paket_ici_adet: Int,
+    val kategori_adi: String
+)
+
+// 3. YENİ: Sipariş Gönderme Kalıpları (Sepetteki her ürün ve genel sipariş kapağı)
+data class SiparisDetay(
+    val urun_id: Int,
+    val miktar: Double,
+    val birim_fiyati: Double,
+    val ara_toplam: Double
+)
+
+data class SiparisIstegi(
+    val musteri_id: Int,
+    val toplam_tutar: Double,
+    val sepet_urunleri: List<SiparisDetay>
+)
+
+// 4. API İsteklerimizi Tanımladığımız Arayüz
 interface SuhaAmbalajApi {
-    // İleride Node.js tarafında "/api/kayit" adında bir adres (endpoint) oluşturacağız
     @POST("/api/kayit")
     suspend fun musteriKaydet(@Body istek: KayitIstegi): SunucuCevabi
+
+    @GET("/api/urunler")
+    suspend fun urunleriGetir(): UrunCevabi
+
+    // YENİ: Sepeti Node.js'e fırlatacak köprü
+    @POST("/api/siparis")
+    suspend fun siparisGonder(@Body istek: SiparisIstegi): SunucuCevabi
 }
 
-// 4. Retrofit İstemcisi (Motoru)
+// 5. Retrofit İstemcisi (Motoru)
 object ApiClient {
-    /*
-     ÇOK ÖNEMLİ: Android Emülatörü kendi içinde sanal bir cihaz olduğu için
-     bilgisayarındaki Node.js'e (localhost) doğrudan ulaşamaz.
-     Emülatörün senin bilgisayarına bağlanması için "10.0.2.2" IP'si kullanılır.
-    */
     private const val BASE_URL = "http://10.0.2.2:3000/"
 
     val retrofitService: SuhaAmbalajApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
-            .addConverterFactory(GsonConverterFactory.create()) // Verileri otomatik JSON yapar
+            .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SuhaAmbalajApi::class.java)
     }
