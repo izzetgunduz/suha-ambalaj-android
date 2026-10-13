@@ -7,10 +7,12 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 
 // 1. Müşteri Kayıt İstek/Cevap Kalıpları
+// 1. GÜNCELLENEN: Müşteri Kayıt İstek/Cevap Kalıpları
 data class KayitIstegi(
     val dukkanAdi: String,
     val yetkiliAdi: String,
     val telefon: String,
+    val sifre: String, // YENİ EKLENDİ
     val enlem: Double,
     val boylam: Double
 )
@@ -19,6 +21,22 @@ data class SunucuCevabi(
     val basarili: Boolean,
     val mesaj: String
 )
+
+// 2. YENİ EKLENEN: Giriş Yap İstek/Cevap Kalıpları
+data class GirisIstegi(
+    val telefon: String,
+    val sifre: String
+)
+
+data class GirisCevabi(
+    val basarili: Boolean,
+    val mesaj: String,
+    val musteri_id: Int?,
+    val yetkili_adi: String?,
+    val onay_durumu: String?
+)
+
+// ... (Buradan sonrası aynı: UrunCevabi, SiparisDetay vb.)
 
 // 2. Ürün Çekme İstek/Cevap Kalıpları
 data class UrunCevabi(
@@ -40,7 +58,7 @@ data class Urun(
     val kategori_adi: String
 )
 
-// 3. YENİ: Sipariş Gönderme Kalıpları (Sepetteki her ürün ve genel sipariş kapağı)
+// 3. Sipariş Gönderme Kalıpları
 data class SiparisDetay(
     val urun_id: Int,
     val miktar: Double,
@@ -54,20 +72,40 @@ data class SiparisIstegi(
     val sepet_urunleri: List<SiparisDetay>
 )
 
-// 4. API İsteklerimizi Tanımladığımız Arayüz
+// 4. YENİ: Sipariş Geçmişi Çekme Kalıpları
+// YENİ: Sipariş Geçmişi Çekme Kalıpları
+data class SiparisOzet(
+    val id: Int,
+    val toplam_tutar: String, // Numeric değer string olarak gelebilir
+    val siparis_durumu: String,
+    val siparis_tarihi: String
+)
+
+data class SiparisGecmisiCevabi(
+    val basarili: Boolean,
+    val siparisler: List<SiparisOzet>?
+)
+
+// 5. API İsteklerimizi Tanımladığımız Arayüz
 interface SuhaAmbalajApi {
     @POST("/api/kayit")
     suspend fun musteriKaydet(@Body istek: KayitIstegi): SunucuCevabi
 
+    // YENİ: Giriş yapma köprüsü
+    @POST("/api/giris")
+    suspend fun girisYap(@Body istek: GirisIstegi): GirisCevabi
+
     @GET("/api/urunler")
     suspend fun urunleriGetir(): UrunCevabi
 
-    // YENİ: Sepeti Node.js'e fırlatacak köprü
     @POST("/api/siparis")
     suspend fun siparisGonder(@Body istek: SiparisIstegi): SunucuCevabi
+
+    @GET("/api/siparislerim")
+    suspend fun siparisGecmisiniGetir(): SiparisGecmisiCevabi
 }
 
-// 5. Retrofit İstemcisi (Motoru)
+// 6. Retrofit İstemcisi (Motoru)
 object ApiClient {
     private const val BASE_URL = "http://10.0.2.2:3000/"
 
