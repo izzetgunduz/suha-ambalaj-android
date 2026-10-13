@@ -78,12 +78,34 @@ fun AnaUygulamaEkrani() {
 // --- YENİ EKLENEN PROFİL VE SİPARİŞ GEÇMİŞİ EKRANI ---
 @Composable
 fun ProfilVeSiparisEkrani() {
-    // Profil sekmesi içindeki ekran geçişlerini yöneten durum yöneticisi
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+
+    var girisYapildiMi by remember { mutableStateOf(sessionManager.girisYapildiMi()) }
     var aktifSayfa by remember { mutableStateOf("karsilama") }
-    var girisYapildiMi by remember { mutableStateOf(false) }
+
+    // YENİ: Giriş yapan kişinin yetkisini soruyoruz
+    val onayDurumu = sessionManager.onayDurumuGetir()
 
     if (girisYapildiMi) {
-        GecmisSiparislerEkrani()
+        // YENİ YÖNLENDİRİCİ: Eğer adminse Patron Panelini aç, değilse normal geçmiş siparişleri aç!
+        if (onayDurumu == "admin") {
+            YoneticiPaneliEkrani(
+                cikisYap = {
+                    sessionManager.cikisYap()
+                    girisYapildiMi = false
+                    aktifSayfa = "karsilama"
+                }
+            )
+        } else {
+            GecmisSiparislerEkrani(
+                cikisYap = {
+                    sessionManager.cikisYap()
+                    girisYapildiMi = false
+                    aktifSayfa = "karsilama"
+                }
+            )
+        }
     } else {
         when (aktifSayfa) {
             "karsilama" -> KarsilamaEkrani(
@@ -98,6 +120,219 @@ fun ProfilVeSiparisEkrani() {
                 geriyeDon = { aktifSayfa = "karsilama" },
                 basariliKayit = { girisYapildiMi = true }
             )
+        }
+    }
+}
+
+// --- YENİ EKLENEN: SADECE YÖNETİCİLERİN GÖREBİLECEĞİ GİZLİ EKRAN ---
+@Composable
+fun YoneticiPaneliEkrani(cikisYap: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+    val yetkiliAdi = sessionManager.yetkiliAdiGetir()
+
+    var aktifAltSayfa by remember { mutableStateOf("ana_panel") }
+
+    when (aktifAltSayfa) {
+        "musteri_yonetimi" -> MusteriYonetimEkrani(geriyeDon = { aktifAltSayfa = "ana_panel" })
+        "tum_siparisler" -> TumSiparislerEkrani(geriyeDon = { aktifAltSayfa = "ana_panel" }) // YENİ EKLENDİ
+        else -> {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Patron Paneli", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary)
+                    TextButton(onClick = { cikisYap() }) {
+                        Text("Çıkış Yap", color = Color.Red, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Hoş Geldin, $yetkiliAdi", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("Yetki Seviyesi: SÜPER YÖNETİCİ", color = Color(0xFF10B981), modifier = Modifier.padding(top = 4.dp), fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Text("Yönetim İşlemleri", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(bottom = 12.dp))
+
+                Button(onClick = { aktifAltSayfa = "musteri_yonetimi" }, modifier = Modifier.fillMaxWidth().height(60.dp).padding(bottom = 8.dp)) {
+                    Text("Müşteri Onay ve Yönetimi", fontSize = 16.sp)
+                }
+
+                // YENİ: Artık bu buton çalışıyor!
+                Button(onClick = { aktifAltSayfa = "tum_siparisler" }, modifier = Modifier.fillMaxWidth().height(60.dp).padding(bottom = 8.dp)) {
+                    Text("Gelen Tüm Siparişler", fontSize = 16.sp)
+                }
+
+                Button(onClick = { /* Ürün Yönetimi */ }, modifier = Modifier.fillMaxWidth().height(60.dp).padding(bottom = 8.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                    Text("Ürün ve Katalog Yönetimi", fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
+
+// --- YENİ EKLENEN: TÜM SİPARİŞLERİ GÖSTEREN YÖNETİCİ EKRANI ---
+@Composable
+fun TumSiparislerEkrani(geriyeDon: () -> Unit) {
+    var siparisListesi by remember { mutableStateOf<List<AdminSiparis>>(emptyList()) }
+    var yukleniyor by remember { mutableStateOf(true) }
+    var hataMesaji by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        try {
+            val cevap = ApiClient.retrofitService.tumSiparisleriGetir()
+            if (cevap.basarili && cevap.siparisler != null) {
+                siparisListesi = cevap.siparisler
+            } else {
+                hataMesaji = "Sipariş bulunamadı."
+            }
+        } catch (e: Exception) {
+            hataMesaji = "Sunucuya bağlanılamadı: ${e.message}"
+        } finally {
+            yukleniyor = false
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(end = 8.dp)) {
+                Text("← Geri", color = Color.Gray, fontWeight = FontWeight.Bold)
+            }
+            Text("Tüm Siparişler", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
+        }
+
+        if (yukleniyor) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else if (hataMesaji.isNotEmpty() && siparisListesi.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(hataMesaji, color = Color.Red) }
+        } else if (siparisListesi.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sisteme düşen hiçbir sipariş yok.", color = Color.Gray) }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(siparisListesi) { siparis ->
+                    AdminSiparisKarti(siparis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminSiparisKarti(siparis: AdminSiparis) {
+    val tarih = siparis.siparis_tarihi.take(10) // Sadece YYYY-MM-DD kısmını al
+    val dukkanAdi = siparis.dukkan_adi ?: "Bilinmeyen İşletme"
+    val telefon = siparis.telefon ?: "Telefon Yok"
+
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Sipariş #${siparis.siparis_id}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                Text(text = "${siparis.toplam_tutar} ₺", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+            Divider(modifier = Modifier.padding(vertical = 8.dp).background(Color.LightGray.copy(alpha = 0.5f)))
+            Text(text = "İşletme: $dukkanAdi", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(text = "Yetkili: ${siparis.yetkili_adi ?: "Belirtilmemiş"}", color = Color.DarkGray, fontSize = 14.sp)
+            Text(text = "Telefon: $telefon", color = Color.DarkGray, fontSize = 14.sp)
+            Text(text = "Tarih: $tarih", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+}
+
+// --- YENİ EKLENEN: MÜŞTERİ YÖNETİM SAYFASI VE LİSTESİ ---
+@Composable
+fun MusteriYonetimEkrani(geriyeDon: () -> Unit) {
+    var musteriListesi by remember { mutableStateOf<List<Musteri>>(emptyList()) }
+    var yukleniyor by remember { mutableStateOf(true) }
+    var listeyiYenile by remember { mutableStateOf(0) } // Her işlemde listeyi tazelemek için tetikleyici
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(listeyiYenile) {
+        yukleniyor = true
+        try {
+            val cevap = ApiClient.retrofitService.musterileriGetir()
+            if (cevap.basarili && cevap.musteriler != null) {
+                musteriListesi = cevap.musteriler
+            }
+        } catch (e: Exception) {
+            // Hata durumu
+        } finally {
+            yukleniyor = false
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(end = 8.dp)) {
+                Text("← Geri", color = Color.Gray, fontWeight = FontWeight.Bold)
+            }
+            Text("Müşteri Yönetimi", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
+        }
+
+        if (yukleniyor) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else if (musteriListesi.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sistemde kayıtlı müşteri bulunmuyor.", color = Color.Gray) }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(musteriListesi) { musteri ->
+                    MusteriKarti(musteri) { yeniDurum ->
+                        // Durum değiştirme butonlarına basıldığında çalışacak kod
+                        coroutineScope.launch {
+                            try {
+                                val cevap = ApiClient.retrofitService.musteriOnayGuncelle(MusteriOnayIstegi(musteri.id, yeniDurum))
+                                if (cevap.basarili) {
+                                    listeyiYenile++ // Başarılıysa ekranı otomatik yenile
+                                }
+                            } catch (e: Exception) {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MusteriKarti(musteri: Musteri, durumGuncelle: (String) -> Unit) {
+    // Veritabanından eski kayıtlardan null (boş) değer gelirse çökmeyi engeller
+    val durum = musteri.onay_durumu ?: "bekliyor"
+    val dukkanAdi = musteri.dukkan_adi ?: "Bilinmeyen İşletme"
+    val yetkiliAdi = musteri.yetkili_adi ?: "İsimsiz Yetkili"
+    val telefon = musteri.telefon ?: "Telefon Yok"
+
+    val durumRengi = when (durum) {
+        "onayli" -> Color(0xFF10B981) // Yeşil
+        "bekliyor" -> Color(0xFFF59E0B) // Turuncu
+        "engellendi" -> Color.Red // Kırmızı
+        else -> Color.Gray
+    }
+
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = dukkanAdi, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text(text = yetkiliAdi, color = Color.DarkGray, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+                    Text(text = telefon, color = Color.DarkGray, fontSize = 14.sp)
+                }
+                Card(colors = CardDefaults.cardColors(containerColor = durumRengi.copy(alpha = 0.1f))) {
+                    Text(text = durum.uppercase(), color = durumRengi, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+
+            Divider(modifier = Modifier.padding(vertical = 12.dp).background(Color.LightGray.copy(alpha = 0.5f)))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { durumGuncelle("onayli") }, enabled = durum != "onayli") {
+                    Text("Onayla", color = if (durum != "onayli") Color(0xFF10B981) else Color.LightGray)
+                }
+                TextButton(onClick = { durumGuncelle("bekliyor") }, enabled = durum != "bekliyor") {
+                    Text("Beklet", color = if (durum != "bekliyor") Color(0xFFF59E0B) else Color.LightGray)
+                }
+                TextButton(onClick = { durumGuncelle("engellendi") }, enabled = durum != "engellendi") {
+                    Text("Engelle", color = if (durum != "engellendi") Color.Red else Color.LightGray)
+                }
+            }
         }
     }
 }
@@ -136,21 +371,20 @@ fun GirisYapEkrani(geriyeDon: () -> Unit, basariliGiris: () -> Unit) {
     var yukleniyor by remember { mutableStateOf(false) }
     var sonucMesaji by remember { mutableStateOf("") }
 
+    // YENİ: Hafıza yöneticisini ekrana çağırıyoruz
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Giriş Yap", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 24.dp))
 
-        // YENİ: Görsel +90 eklendi ve baştaki 0 engellendi
         OutlinedTextField(
             value = telefon,
-            onValueChange = {
-                // Kullanıcı numaraya 0 ile başlarsa o sıfırı otomatik siler
-                telefon = it.removePrefix("0")
-            },
+            onValueChange = { telefon = it.removePrefix("0") },
             label = { Text("Telefon Numarası") },
             leadingIcon = { Text("+90", modifier = Modifier.padding(start = 16.dp, end = 4.dp), fontWeight = FontWeight.Bold, color = Color.DarkGray) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            singleLine = true
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
         OutlinedTextField(
@@ -160,7 +394,7 @@ fun GirisYapEkrani(geriyeDon: () -> Unit, basariliGiris: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
-        TextButton(onClick = { /* Şifremi unuttum eklenecek */ }, modifier = Modifier.align(Alignment.End)) {
+        TextButton(onClick = { /* Şifremi unuttum */ }, modifier = Modifier.align(Alignment.End)) {
             Text("Şifremi Unuttum", color = MaterialTheme.colorScheme.secondary)
         }
 
@@ -174,11 +408,17 @@ fun GirisYapEkrani(geriyeDon: () -> Unit, basariliGiris: () -> Unit) {
                 sonucMesaji = ""
                 coroutineScope.launch {
                     try {
-                        // Artık ekranda +90 olduğu için sadece birleştirip gönderiyoruz
                         val istek = GirisIstegi("+90$telefon", sifre)
                         val cevap = ApiClient.retrofitService.girisYap(istek)
 
                         if (cevap.basarili) {
+                            // YENİ: Node.js'ten gelen bilgileri telefona kalıcı olarak kazıyoruz!
+                            sessionManager.oturumuKaydet(
+                                musteriId = cevap.musteri_id ?: -1,
+                                yetkiliAdi = cevap.yetkili_adi ?: "",
+                                onayDurumu = cevap.onay_durumu ?: "bekliyor"
+                            )
+
                             sonucMesaji = "Giriş Başarılı! Yönlendiriliyorsunuz..."
                             delay(1500)
                             basariliGiris()
@@ -290,7 +530,14 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
 
 // Eski ProfilVeSiparisEkrani içeriğimizi bu isme taşıdık
 @Composable
-fun GecmisSiparislerEkrani() {
+fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+
+    // YENİ: Hafızadan müşterinin gerçek bilgilerini çekiyoruz
+    val musteriId = sessionManager.musteriIdGetir()
+    val yetkiliAdi = sessionManager.yetkiliAdiGetir()
+
     var siparisListesi by remember { mutableStateOf<List<SiparisOzet>>(emptyList()) }
     var yukleniyor by remember { mutableStateOf(true) }
     var hataMesaji by remember { mutableStateOf("") }
@@ -313,13 +560,21 @@ fun GecmisSiparislerEkrani() {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Profilim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 16.dp))
+        // YENİ: Başlık ve Çıkış Yap butonu aynı satıra alındı
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Profilim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary)
+
+            TextButton(onClick = { cikisYap() }) {
+                Text("Çıkış Yap", color = Color.Red, fontWeight = FontWeight.Bold)
+            }
+        }
 
         Card(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("İşletme: Suha Ambalaj B2B", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Text("Yetkili: İzzet Gündüz", color = Color.DarkGray, modifier = Modifier.padding(top = 4.dp))
-                Text("Müşteri No: #1", color = Color.DarkGray)
+                // YENİ: Sabit isim yerine giriş yapan kişinin gerçek adı yazacak!
+                Text("Yetkili: $yetkiliAdi", color = Color.DarkGray, modifier = Modifier.padding(top = 4.dp))
+                Text("Müşteri No: #$musteriId", color = Color.DarkGray)
             }
         }
 
@@ -526,6 +781,10 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
     var siparisGonderiliyor by remember { mutableStateOf(false) }
     var siparisSonucu by remember { mutableStateOf("") }
 
+    // YENİ: Hafıza yöneticisini sepete de çağırıyoruz
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Sepetim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 16.dp))
 
@@ -548,11 +807,28 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
             }
 
             if (siparisSonucu.isNotEmpty()) {
-                Text(text = siparisSonucu, color = if (siparisSonucu.contains("Başarı")) Color(0xFF10B981) else Color.Red, modifier = Modifier.padding(vertical = 8.dp).align(Alignment.CenterHorizontally), fontWeight = FontWeight.Bold)
+                Text(text = siparisSonucu, color = if (siparisSonucu.contains("Başarılı") || siparisSonucu.contains("İletildi")) Color(0xFF10B981) else Color.Red, modifier = Modifier.padding(vertical = 8.dp).align(Alignment.CenterHorizontally), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             }
 
             Button(
                 onClick = {
+                    // YENİ: 1. Bariyer - Giriş Yapılmamışsa
+                    if (!sessionManager.girisYapildiMi()) {
+                        siparisSonucu = "Sipariş vermek için Profil sekmesinden giriş yapmalısınız."
+                        return@Button
+                    }
+
+                    // YENİ: 2. Bariyer - Yönetici Onayı Yoksa veya Engellenmişse
+                    val onayDurumu = sessionManager.onayDurumuGetir()
+                    if (onayDurumu == "bekliyor") {
+                        siparisSonucu = "Sipariş yetkiniz yönetici onayındadır. Lütfen bekleyiniz."
+                        return@Button
+                    }
+                    if (onayDurumu == "engellendi" || onayDurumu == "onaysiz") {
+                        siparisSonucu = "Sipariş verme yetkiniz bulunmamaktadır."
+                        return@Button
+                    }
+
                     siparisGonderiliyor = true
                     siparisSonucu = ""
                     coroutineScope.launch {
@@ -565,7 +841,9 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam)
                             }
 
-                            val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(1, toplamTutar, detayListesi))
+                            // YENİ: Artık sabit 1 yerine gerçek giriş yapan kişinin ID'sini yolluyoruz
+                            val gercekMusteriId = sessionManager.musteriIdGetir()
+                            val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(gercekMusteriId, toplamTutar, detayListesi))
 
                             if (cevap.basarili) {
                                 siparisSonucu = "Sipariş Başarıyla İletildi! ✓"
@@ -575,7 +853,7 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                             } else {
                                 siparisSonucu = "Hata: ${cevap.mesaj}"
                             }
-                        } catch (e: Exception) { siparisSonucu = "Sunucuya bağlanılamadı! Node.js açık mı?" } finally { siparisGonderiliyor = false }
+                        } catch (e: Exception) { siparisSonucu = "Sunucuya bağlanılamadı!" } finally { siparisGonderiliyor = false }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(55.dp).padding(top = 8.dp),

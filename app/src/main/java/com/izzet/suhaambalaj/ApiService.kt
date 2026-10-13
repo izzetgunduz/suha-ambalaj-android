@@ -6,8 +6,43 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 
+
+// YENİ EKLENEN: Yönetici İçin Tüm Siparişler Kalıpları
+data class AdminSiparis(
+    val siparis_id: Int,
+    val toplam_tutar: String,
+    val siparis_tarihi: String,
+    val dukkan_adi: String?,
+    val yetkili_adi: String?,
+    val telefon: String?
+)
+
+data class TumSiparislerCevabi(
+    val basarili: Boolean,
+    val siparisler: List<AdminSiparis>?
+)
+
+
+// YENİ EKLENEN: Müşteri ve Yönetim Kalıpları
+data class Musteri(
+    val id: Int,
+    val dukkan_adi: String?,
+    val yetkili_adi: String?,
+    val telefon: String?,
+    val onay_durumu: String?
+)
+
+data class MusteriListesiCevabi(
+    val basarili: Boolean,
+    val musteriler: List<Musteri>?
+)
+
+data class MusteriOnayIstegi(
+    val musteri_id: Int,
+    val yeni_durum: String
+)
+
 // 1. Müşteri Kayıt İstek/Cevap Kalıpları
-// 1. GÜNCELLENEN: Müşteri Kayıt İstek/Cevap Kalıpları
 data class KayitIstegi(
     val dukkanAdi: String,
     val yetkiliAdi: String,
@@ -103,6 +138,17 @@ interface SuhaAmbalajApi {
 
     @GET("/api/siparislerim")
     suspend fun siparisGecmisiniGetir(): SiparisGecmisiCevabi
+
+    @GET("/api/musteriler")
+    suspend fun musterileriGetir(): MusteriListesiCevabi
+
+    @POST("/api/musteri-onay")
+    suspend fun musteriOnayGuncelle(@Body istek: MusteriOnayIstegi): SunucuCevabi
+
+    @GET("/api/tum-siparisler")
+    suspend fun tumSiparisleriGetir(): TumSiparislerCevabi
+
+
 }
 
 // 6. Retrofit İstemcisi (Motoru)
