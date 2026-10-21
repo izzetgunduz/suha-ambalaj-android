@@ -5,6 +5,40 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
+
+
+
+data class UrunEkleIstegi(
+    val kategori_id: Int,
+    val urun_adi: String,
+    val marka: String,
+    val satis_birimi: String,
+    val birim_detayi: String,
+    val taban_fiyati: String,
+    val fotograflar: List<String>?,
+    val stokta_var_mi: Boolean
+)
+
+data class UrunEkleCevabi(
+    val basarili: Boolean,
+    val mesaj: String,
+    val urun: Urun?
+)
+
+
+// YENİ EKLENEN: Sipariş Detayları Kalıpları
+data class SiparisDetayElemani(
+    val miktar: Double,
+    val birim_fiyati: String,
+    val ara_toplam: String,
+    val urun_adi: String
+)
+
+data class SiparisDetayCevabi(
+    val basarili: Boolean,
+    val detaylar: List<SiparisDetayElemani>?
+)
 
 
 // YENİ EKLENEN: Yönetici İçin Tüm Siparişler Kalıpları
@@ -90,8 +124,15 @@ data class Urun(
     val urun_tipi: String,
     val koli_ici_paket: Int,
     val paket_ici_adet: Int,
-    val kategori_adi: String
+    val kategori_adi: String,
+    val stokta_var_mi: Boolean? = true
 )
+
+// YENİ EKLENEN: Ayar ve Stok Kalıpları
+data class AyarDurumuCevabi(val basarili: Boolean, val fiyatlar_gizli_mi: Boolean?)
+data class FiyatGuncelleIstegi(val gizli_mi: Boolean)
+data class StokGuncelleIstegi(val urun_id: Int, val stokta_var_mi: Boolean)
+
 
 // 3. Sipariş Gönderme Kalıpları
 data class SiparisDetay(
@@ -147,6 +188,22 @@ interface SuhaAmbalajApi {
 
     @GET("/api/tum-siparisler")
     suspend fun tumSiparisleriGetir(): TumSiparislerCevabi
+
+    @GET("/api/siparis-detay/{siparis_id}")
+    suspend fun siparisDetayiGetir(@Path("siparis_id") siparisId: Int): SiparisDetayCevabi
+
+    @GET("/api/ayarlar/fiyat-durumu")
+    suspend fun fiyatDurumuGetir(): AyarDurumuCevabi
+
+    @POST("/api/ayarlar/fiyat-guncelle")
+    suspend fun fiyatGizlilikGuncelle(@Body istek: FiyatGuncelleIstegi): SunucuCevabi
+
+    @POST("/api/urun/stok-guncelle")
+    suspend fun urunStokGuncelle(@Body istek: StokGuncelleIstegi): SunucuCevabi
+
+
+    @POST("/api/urun-ekle")
+    suspend fun urunEkle(@Body istek: UrunEkleIstegi): UrunEkleCevabi
 
 
 }
