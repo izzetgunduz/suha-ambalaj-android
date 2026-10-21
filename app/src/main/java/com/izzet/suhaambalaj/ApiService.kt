@@ -8,7 +8,6 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 
-
 data class UrunEkleIstegi(
     val kategori_id: Int,
     val urun_adi: String,
@@ -139,7 +138,8 @@ data class SiparisDetay(
     val urun_id: Int,
     val miktar: Double,
     val birim_fiyati: Double,
-    val ara_toplam: Double
+    val ara_toplam: Double,
+    val birim: String // YENİ EKLENDİ
 )
 
 data class SiparisIstegi(
@@ -177,9 +177,9 @@ interface SuhaAmbalajApi {
     @POST("/api/siparis")
     suspend fun siparisGonder(@Body istek: SiparisIstegi): SunucuCevabi
 
-    @GET("/api/siparislerim")
-    suspend fun siparisGecmisiniGetir(): SiparisGecmisiCevabi
-
+    // Linkte süslü parantez varsa, fonksiyonda kesinlikle @Path olmak zorundadır!
+    @GET("/api/siparislerim/{musteri_id}")
+    suspend fun siparisGecmisiniGetir(@Path("musteri_id") id: Int): SiparisGecmisiCevabi
     @GET("/api/musteriler")
     suspend fun musterileriGetir(): MusteriListesiCevabi
 

@@ -695,7 +695,7 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
 
 // Eski ProfilVeSiparisEkrani içeriğimizi bu isme taşıdık
 @Composable
-fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
+    fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionManager = remember { SessionManager(context) }
 
@@ -707,18 +707,22 @@ fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
     var yukleniyor by remember { mutableStateOf(true) }
     var hataMesaji by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
+    // YENİ: Ekran her açıldığında anlık zamanı anahtar (key) olarak veriyoruz ki
+    // Android "Bu sayfa yeni, verileri tekrar çekmeliyim" desin ve sayfayı zorla tazelesin.
+    LaunchedEffect(key1 = System.currentTimeMillis()) {
+        yukleniyor = true
         try {
-            val cevap = ApiClient.retrofitService.siparisGecmisiniGetir()
-            if (cevap.basarili && cevap.siparisler != null) {
-                siparisListesi = cevap.siparisler
-            } else if (cevap.basarili) {
-                siparisListesi = emptyList()
+            val musteriId = sessionManager.musteriIdGetir()
+            val cevap = ApiClient.retrofitService.siparisGecmisiniGetir(musteriId)
+
+            if (cevap.basarili) {
+                // Eğer Node.js'ten gelen veri boş değilse listeye aktar
+                siparisListesi = cevap.siparisler ?: emptyList()
+                hataMesaji = ""
             } else {
-                hataMesaji = "Sipariş geçmişi alınamadı."
-            }
+                hataMesaji = "Sipariş geçmişi yüklenemedi."            }
         } catch (e: Exception) {
-            hataMesaji = "Hata Detayı: ${e.message}"
+            hataMesaji = "Sunucu bağlantı hatası."
         } finally {
             yukleniyor = false
         }
@@ -763,13 +767,20 @@ fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
 
 @Composable
 fun SiparisKarti(siparis: SiparisOzet) {
-    // Sipariş durumuna göre renk belirliyoruz
-    val durumRengi = when(siparis.siparis_durumu.lowercase()) {
-        "bekliyor" -> Color(0xFFF59E0B) // Turuncu
-        "onaylandı", "hazırlanıyor" -> Color(0xFF10B981) // Yeşil
-        "iptal edildi" -> Color.Red // Kırmızı
-        else -> Color.Gray
+    val guvenliDurum = siparis.siparis_durumu ?: "bekliyor"
+    val durumRengi = when (guvenliDurum.lowercase()) {
+        "onaylandi" -> Color(0xFF10B981) // Yeşil
+        "iptal edildi" -> Color.Red
+        else -> Color(0xFFF59E0B) // Turuncu (Bekliyor)
     }
+
+// Ekrana basarken de güvenliDurum'u büyük harfe çevirerek basıyoruz
+    Text(
+        text = guvenliDurum.uppercase(),
+        color = durumRengi,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 12.sp
+    )
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -784,13 +795,12 @@ fun SiparisKarti(siparis: SiparisOzet) {
             Column {
                 Text(text = "Sipariş #${siparis.id}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 // Tarihi "2026-10-10" gibi sadece gün kısmını alarak daha temiz gösteriyoruz
-                Text(text = siparis.siparis_tarihi.take(10), fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                Text(text = siparis.siparis_tarihi?.take(10) ?: "Tarih Yok", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(text = "${siparis.toplam_tutar} ₺", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                 Text(
-                    text = siparis.siparis_durumu.uppercase(),
-                    fontSize = 12.sp,
+                    text = (siparis.siparis_durumu ?: "bekliyor").uppercase(),                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = durumRengi,
                     modifier = Modifier.padding(top = 4.dp)
@@ -804,7 +814,8 @@ fun SiparisKarti(siparis: SiparisOzet) {
 @Composable
 fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean) {
     var aramaMetni by remember { mutableStateOf("") }
-    val kullaniciRol = SessionManager(androidx.compose.ui.platform.LocalContext.current).onayDurumuGetir()
+    val kullaniciRol =
+        SessionManager(androidx.compose.ui.platform.LocalContext.current).onayDurumuGetir()
     var seciliUrun by remember { mutableStateOf<Urun?>(null) }
     var miktarSecimDialogAcik by remember { mutableStateOf(false) }
     var urunListesi by remember { mutableStateOf<List<Urun>>(emptyList()) }
@@ -814,7 +825,11 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
     LaunchedEffect(Unit) {
         try {
             val cevap = ApiClient.retrofitService.urunleriGetir()
-            if (cevap.basarili) { urunListesi = cevap.urunler } else { hataMesaji = "Sunucudan ürünler alınamadı." }
+            if (cevap.basarili) {
+                urunListesi = cevap.urunler
+            } else {
+                hataMesaji = "Sunucudan ürünler alınamadı."
+            }
         } catch (e: Exception) {
             hataMesaji = "Node.js sunucusuna bağlanılamadı!"
         } finally {
@@ -823,11 +838,20 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
     }
 
     val filtrelenmisUrunler = urunListesi.filter {
-        it.urun_adi.contains(aramaMetni, ignoreCase = true) || it.kategori_adi.contains(aramaMetni, ignoreCase = true)
+        it.urun_adi.contains(aramaMetni, ignoreCase = true) || it.kategori_adi.contains(
+            aramaMetni,
+            ignoreCase = true
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Text("SUHA AMBALAJ", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
+        Text(
+            "SUHA AMBALAJ",
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 24.sp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+        )
 
         OutlinedTextField(
             value = aramaMetni, onValueChange = { aramaMetni = it },
@@ -835,12 +859,25 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), singleLine = true
         )
 
-        Text(if (aramaMetni.isEmpty()) "Canlı Ürün Vitrini" else "Arama Sonuçları", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 8.dp))
+        Text(
+            if (aramaMetni.isEmpty()) "Canlı Ürün Vitrini" else "Arama Sonuçları",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
 
         if (yukleniyor) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) { CircularProgressIndicator() }
         } else if (hataMesaji.isNotEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(hataMesaji, color = Color.Red) }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    hataMesaji,
+                    color = Color.Red
+                )
+            }
         } else {
             LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize()) {
                 gridItems(filtrelenmisUrunler) { urun ->
@@ -857,18 +894,31 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
             }
         }
     }
+
+    // YENİ: Etrafına koruyucu kilit eklendi! Sadece butona basıldığında ve ürün seçildiğinde çalışacak.
     if (miktarSecimDialogAcik && seciliUrun != null) {
         MiktarSecimDialog(
             urun = seciliUrun!!,
             kapat = { miktarSecimDialogAcik = false },
             sepeteOnayla = { miktar, secilenBirim ->
-                sepetListesi.add(SepetElemani(seciliUrun!!, miktar, secilenBirim))
+                // YENİ MANTIK: Sepette bu ürün zaten var mı diye kontrol ediyoruz
+                val sepettekiUrun =
+                    sepetListesi.find { it.urun.id == seciliUrun!!.id && it.secilenBirim == secilenBirim }
+
+                if (sepettekiUrun != null) {
+                    // Ürün zaten varsa, sadece miktarını arttır
+                    val index = sepetListesi.indexOf(sepettekiUrun)
+                    sepetListesi[index] = sepettekiUrun.copy(miktar = sepettekiUrun.miktar + miktar)
+                } else {
+                    // Ürün yoksa, sepete yeni bir satır olarak ekle
+                    sepetListesi.add(SepetElemani(seciliUrun!!, miktar, secilenBirim))
+                }
+
                 miktarSecimDialogAcik = false
             }
         )
     }
 }
-
 @Composable
 fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, kullaniciRol: String, sepeteEkle: () -> Unit) {
     Card(
@@ -952,7 +1002,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
     var siparisGonderiliyor by remember { mutableStateOf(false) }
     var siparisSonucu by remember { mutableStateOf("") }
 
-    // YENİ: Hafıza yöneticisini sepete de çağırıyoruz
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionManager = remember { SessionManager(context) }
 
@@ -963,7 +1012,8 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sepetiniz boş.", color = Color.Gray) }
         } else {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                sepetListesi.forEach { eleman ->
+                // YENİ: Eleman silindiğinde çökme (ConcurrentModificationException) yaşanmaması için toList() eklendi
+                sepetListesi.toList().forEach { eleman ->
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(text = eleman.urun.urun_adi, fontWeight = FontWeight.Bold)
@@ -971,8 +1021,43 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 Text(text = "Birim Fiyatı: ${eleman.urun.taban_fiyati} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 14.sp)
                             }
                         }
-                        val formatliMiktar = if (eleman.miktar % 1.0 == 0.0) eleman.miktar.toInt().toString() else eleman.miktar.toString()
-                        Text(text = "$formatliMiktar ${eleman.secilenBirim}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+
+                        // YENİ: Arttır / Azalt / Sil Butonları
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = {
+                                val guncelIndex = sepetListesi.indexOf(eleman)
+                                if (guncelIndex != -1) {
+                                    if (eleman.miktar > 1) {
+                                        // 1'den büyükse azalt
+                                        sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar - 1)
+                                    } else {
+                                        // Miktar 1 ise tamamen listeden çıkar
+                                        sepetListesi.removeAt(guncelIndex)
+                                    }
+                                }
+                            }) {
+                                Text(text = "-", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = Color.Red)
+                            }
+
+                            val formatliMiktar = if (eleman.miktar % 1.0 == 0.0) eleman.miktar.toInt().toString() else eleman.miktar.toString()
+                            Text(
+                                text = "$formatliMiktar ${eleman.secilenBirim}",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+
+                            IconButton(onClick = {
+                                val guncelIndex = sepetListesi.indexOf(eleman)
+                                if (guncelIndex != -1) {
+                                    // Sadece miktarı arttır
+                                    sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar + 1)
+                                }
+                            }) {
+                                Text(text = "+", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color(0xFF10B981))
+                            }
+                        }
                     }
                 }
             }
@@ -983,13 +1068,11 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
 
             Button(
                 onClick = {
-                    // YENİ: 1. Bariyer - Giriş Yapılmamışsa
                     if (!sessionManager.girisYapildiMi()) {
                         siparisSonucu = "Sipariş vermek için Profil sekmesinden giriş yapmalısınız."
                         return@Button
                     }
 
-                    // YENİ: 2. Bariyer - Yönetici Onayı Yoksa veya Engellenmişse
                     val onayDurumu = sessionManager.onayDurumuGetir()
                     if (onayDurumu == "bekliyor") {
                         siparisSonucu = "Sipariş yetkiniz yönetici onayındadır. Lütfen bekleyiniz."
@@ -1009,10 +1092,9 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 val fiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
                                 val araToplam = fiyat * eleman.miktar
                                 toplamTutar += araToplam
-                                SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam)
+                                SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam, eleman.secilenBirim)
                             }
 
-                            // YENİ: Artık sabit 1 yerine gerçek giriş yapan kişinin ID'sini yolluyoruz
                             val gercekMusteriId = sessionManager.musteriIdGetir()
                             val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(gercekMusteriId, toplamTutar, detayListesi))
 
@@ -1033,7 +1115,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
             ) { Text(if (siparisGonderiliyor) "Sipariş Mühürleniyor..." else "Siparişi İlet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
         }
     }
-
 }
 
 
