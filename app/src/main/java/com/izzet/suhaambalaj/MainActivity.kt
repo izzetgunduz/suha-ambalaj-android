@@ -804,6 +804,7 @@ fun SiparisKarti(siparis: SiparisOzet) {
 @Composable
 fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean) {
     var aramaMetni by remember { mutableStateOf("") }
+    val kullaniciRol = SessionManager(androidx.compose.ui.platform.LocalContext.current).onayDurumuGetir()
     var seciliUrun by remember { mutableStateOf<Urun?>(null) }
     var miktarSecimDialogAcik by remember { mutableStateOf(false) }
     var urunListesi by remember { mutableStateOf<List<Urun>>(emptyList()) }
@@ -846,9 +847,8 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
                     UrunKarti(
                         urun = urun,
                         fiyatlarGizliMi = fiyatlarGizliMi,
+                        kullaniciRol = kullaniciRol, // YENİ: Rolü karta gönderdik
                         sepeteEkle = {
-                            // Senin projende Miktar Seçim penceresini açan değişkenler neyse onları yazmalısın.
-                            // Muhtemelen şu ikisidir:
                             seciliUrun = urun
                             miktarSecimDialogAcik = true
                         }
@@ -870,7 +870,7 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
 }
 
 @Composable
-fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, sepeteEkle: () -> Unit) {
+fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, kullaniciRol: String, sepeteEkle: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(8.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
@@ -886,15 +886,18 @@ fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, sepeteEkle: () -> Unit) {
             Text(text = urun.urun_adi, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, textAlign = TextAlign.Center)
             Text(text = urun.birim_detayi ?: "", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp), textAlign = TextAlign.Center)
 
-            // YENİ: Şalter if/else mantığı eklendi!
+            // Fiyat Şalteri
             if (!fiyatlarGizliMi) {
                 Text(text = "${urun.taban_fiyati} ₺ / ${urun.satis_birimi}", color = Color(0xFF0369A1), fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
             } else {
                 Text(text = "Fiyat Gizli", color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
 
-            Button(onClick = { sepeteEkle() }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
-                Text("Sepete Ekle", color = Color.White)
+            // YENİ: Yetki Kontrolü - Sadece admin olmayanlar bu butonu görecek
+            if (kullaniciRol != "admin") {
+                Button(onClick = { sepeteEkle() }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))) {
+                    Text("Sepete Ekle", color = Color.White)
+                }
             }
         }
     }
