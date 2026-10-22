@@ -17,9 +17,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,22 +56,20 @@ data class SepetElemani(val urun: Urun, var miktar: Double, var secilenBirim: St
 @Composable
 fun AnaUygulamaEkrani() {
     var seciliSekme by remember { mutableIntStateOf(0) }
-    var fiyatlarGizliMi by remember { mutableStateOf(false) } // Fiyat şalteri durumu
+
+    // YENİ: Müşteri bir siparişe tıkladığında, o siparişin numarasını bu hafızada tutacağız
+    var seciliSiparisId by remember { mutableIntStateOf(0) }
+
+    var fiyatlarGizliMi by remember { mutableStateOf(false) }
     var sepetListesi = remember { mutableStateListOf<SepetElemani>() }
     var urunListesi by remember { mutableStateOf<List<Urun>>(emptyList()) }
     var yukleniyor by remember { mutableStateOf(true) }
 
-    // ESKİ HALİ: LaunchedEffect(Unit) { ... }
-// YENİ HALİ:
     LaunchedEffect(seciliSekme) {
         try {
-            // 1. Önce Node.js'ten şalterin durumunu öğreniyoruz
             val ayarCevap = ApiClient.retrofitService.fiyatDurumuGetir()
-            if (ayarCevap.basarili) {
-                fiyatlarGizliMi = ayarCevap.fiyatlar_gizli_mi ?: false
-            }
+            if (ayarCevap.basarili) { fiyatlarGizliMi = ayarCevap.fiyatlar_gizli_mi ?: false }
 
-            // 2. Sonra ürünleri çekiyoruz
             val urunCevap = ApiClient.retrofitService.urunleriGetir()
             if (urunCevap.basarili && urunCevap.urunler != null) {
                 urunListesi = urunCevap.urunler.filter { it.stokta_var_mi == true }
@@ -85,16 +86,40 @@ fun AnaUygulamaEkrani() {
                 NavigationBarItem(icon = { Icon(Icons.Filled.Home, "Ana Sayfa") }, label = { Text("Ana Sayfa") }, selected = seciliSekme == 0, onClick = { seciliSekme = 0 })
                 NavigationBarItem(icon = { Icon(Icons.AutoMirrored.Filled.List, "Kategoriler") }, label = { Text("Kategoriler") }, selected = seciliSekme == 1, onClick = { seciliSekme = 1 })
                 NavigationBarItem(icon = { Icon(Icons.Filled.ShoppingCart, "Sepetim") }, label = { Text("Sepetim") }, selected = seciliSekme == 2, onClick = { seciliSekme = 2 })
-                NavigationBarItem(icon = { Icon(Icons.Filled.Person, "Profil") }, label = { Text("Profil") }, selected = seciliSekme == 3, onClick = { seciliSekme = 3 })
+                // Alt menüde 4. sekme yok, Profil yine 3 numara
+                NavigationBarItem(icon = { Icon(Icons.Filled.Person, "Profil") }, label = { Text("Profil") }, selected = seciliSekme == 3 || seciliSekme == 4, onClick = { seciliSekme = 3 })
             }
         }
     ) { paddingValues ->
+        // AnaUygulamaEkrani içindeki when(seciliSekme) bloğunu bul ve şu şekilde değiştir:
         Box(modifier = Modifier.padding(paddingValues)) {
             when (seciliSekme) {
                 0 -> AnaSayfaVitrini(sepetListesi, fiyatlarGizliMi)
                 1 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Kategoriler Sayfası") }
-                2 -> SepetEkrani(sepetListesi, fiyatlarGizliMi)
-                3 -> ProfilVeSiparisEkrani() // YENİ: Boş sayfa yerine artık Sipariş Ekranı var
+
+                // YENİ: Sepet ekranına profil düzenleme sayfasına gitme köprüsünü verdik
+                2 -> SepetEkrani(
+                    sepetListesi = sepetListesi,
+                    fiyatlarGizliMi = fiyatlarGizliMi,
+                    profilDuzenlemeyeGit = { seciliSekme = 5 }
+                )
+
+                3 -> ProfilVeSiparisEkrani(
+                    detaylaraGit = { tiklananId ->
+                        seciliSiparisId = tiklananId
+                        seciliSekme = 4
+                    }
+                )
+
+                4 -> SiparisDetayEkrani(
+                    siparisId = seciliSiparisId,
+                    geriyeDon = { seciliSekme = 3 }
+                )
+
+                // YENİ: 5. GİZLİ SEKME (Profil Düzenleme)
+                5 -> ProfilDuzenlemeEkrani(
+                    geriyeDon = { seciliSekme = 2 } // Geri tuşuyla tekrar sepete dön
+                )
             }
         }
     }
@@ -102,18 +127,16 @@ fun AnaUygulamaEkrani() {
 
 // --- YENİ EKLENEN PROFİL VE SİPARİŞ GEÇMİŞİ EKRANI ---
 @Composable
-fun ProfilVeSiparisEkrani() {
+fun ProfilVeSiparisEkrani(detaylaraGit: (Int) -> Unit) { // YENİ: Parametre eklendi
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionManager = remember { SessionManager(context) }
 
     var girisYapildiMi by remember { mutableStateOf(sessionManager.girisYapildiMi()) }
     var aktifSayfa by remember { mutableStateOf("karsilama") }
 
-    // YENİ: Giriş yapan kişinin yetkisini soruyoruz
     val onayDurumu = sessionManager.onayDurumuGetir()
 
     if (girisYapildiMi) {
-        // YENİ YÖNLENDİRİCİ: Eğer adminse Patron Panelini aç, değilse normal geçmiş siparişleri aç!
         if (onayDurumu == "admin") {
             YoneticiPaneliEkrani(
                 cikisYap = {
@@ -128,7 +151,8 @@ fun ProfilVeSiparisEkrani() {
                     sessionManager.cikisYap()
                     girisYapildiMi = false
                     aktifSayfa = "karsilama"
-                }
+                },
+                detaylaraGit = detaylaraGit // YENİ: Yetkiyi içeri aktardık
             )
         }
     } else {
@@ -298,8 +322,11 @@ fun SiparisDetayEkrani(siparisId: Int, geriyeDon: () -> Unit) {
                             Text(text = "Birim Fiyatı: ${urun.birim_fiyati} ₺", color = Color.Gray, fontSize = 14.sp)
                         }
                         Column(horizontalAlignment = Alignment.End) {
+                            // YENİ: Küsurat kontrolü ve veritabanından gelen gerçek birim yazdırılıyor
                             val formatliMiktar = if (urun.miktar % 1.0 == 0.0) urun.miktar.toInt().toString() else urun.miktar.toString()
-                            Text(text = "Adet/Metre: $formatliMiktar", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                            val birimYazisi = urun.birim ?: ""
+
+                            Text(text = "$formatliMiktar $birimYazisi", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                             Text(text = "Toplam: ${urun.ara_toplam} ₺", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
@@ -408,8 +435,16 @@ fun UrunVeKatalogYonetimiEkrani(geriyeDon: () -> Unit) {
 fun MusteriYonetimEkrani(geriyeDon: () -> Unit) {
     var musteriListesi by remember { mutableStateOf<List<Musteri>>(emptyList()) }
     var yukleniyor by remember { mutableStateOf(true) }
-    var listeyiYenile by remember { mutableStateOf(0) } // Her işlemde listeyi tazelemek için tetikleyici
+    var listeyiYenile by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+
+    var seciliSekme by remember { mutableIntStateOf(0) }
+    val sekmeler = listOf("İstekler", "Onaylılar", "Engellenenler")
+
+    // YENİ: Reddetme penceresi için hafıza değişkenleri
+    var reddedilecekMusteri by remember { mutableStateOf<Musteri?>(null) }
+    var secilenRedSebebi by remember { mutableStateOf("") }
+    var ozelRedSebebi by remember { mutableStateOf("") }
 
     LaunchedEffect(listeyiYenile) {
         yukleniyor = true
@@ -419,41 +454,136 @@ fun MusteriYonetimEkrani(geriyeDon: () -> Unit) {
                 musteriListesi = cevap.musteriler
             }
         } catch (e: Exception) {
-            // Hata durumu
         } finally {
             yukleniyor = false
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+
+        // 1. BAŞLIK VE GERİ BUTONU
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { geriyeDon() }, modifier = Modifier.padding(end = 8.dp)) {
                 Text("← Geri", color = Color.Gray, fontWeight = FontWeight.Bold)
             }
             Text("Müşteri Yönetimi", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
         }
 
+        // 2. SEKMELER
+        TabRow(selectedTabIndex = seciliSekme, containerColor = Color.Transparent, modifier = Modifier.padding(bottom = 16.dp)) {
+            sekmeler.forEachIndexed { index, baslik ->
+                Tab(
+                    selected = seciliSekme == index,
+                    onClick = { seciliSekme = index },
+                    text = { Text(text = baslik, fontWeight = if (seciliSekme == index) FontWeight.ExtraBold else FontWeight.Medium) }
+                )
+            }
+        }
+
+        // 3. FİLTRELEME
+        val gosterilecekMusteriler = musteriListesi.filter { musteri ->
+            when (seciliSekme) {
+                0 -> musteri.onay_durumu == "bekliyor"
+                1 -> musteri.onay_durumu == "onayli"
+                2 -> musteri.onay_durumu == "engellendi"
+                else -> true
+            }
+        }
+
+        // 4. LİSTELEME
         if (yukleniyor) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        } else if (musteriListesi.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sistemde kayıtlı müşteri bulunmuyor.", color = Color.Gray) }
+        } else if (gosterilecekMusteriler.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Bu kategoride müşteri bulunmuyor.", color = Color.Gray)
+            }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(musteriListesi) { musteri ->
+                items(gosterilecekMusteriler) { musteri ->
                     MusteriKarti(musteri) { yeniDurum ->
-                        // Durum değiştirme butonlarına basıldığında çalışacak kod
-                        coroutineScope.launch {
-                            try {
-                                val cevap = ApiClient.retrofitService.musteriOnayGuncelle(MusteriOnayIstegi(musteri.id, yeniDurum))
-                                if (cevap.basarili) {
-                                    listeyiYenile++ // Başarılıysa ekranı otomatik yenile
-                                }
-                            } catch (e: Exception) {}
+                        if (yeniDurum == "engellendi") {
+                            // HATA BURADAYDI: Sadece pencereyi aç komutu veriyoruz, API isteği atmıyoruz!
+                            reddedilecekMusteri = musteri
+                        } else {
+                            // Onayla veya Beklet tıklandıysa direkt sunucuya git
+                            coroutineScope.launch {
+                                try {
+                                    val cevap = ApiClient.retrofitService.musteriOnayGuncelle(MusteriOnayIstegi(musteri.id, yeniDurum))
+                                    if (cevap.basarili) { listeyiYenile++ }
+                                } catch (e: Exception) {}
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    // 5. YENİ: REDDETME SEBEBİ PENCERESİ (En altta, güvenli alanda)
+    if (reddedilecekMusteri != null) {
+        AlertDialog(
+            onDismissRequest = {
+                reddedilecekMusteri = null
+                secilenRedSebebi = ""
+                ozelRedSebebi = ""
+            },
+            title = { Text("Reddetme Sebebi", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column {
+                    Text("${reddedilecekMusteri?.dukkan_adi} isimli işletmeyi neden reddediyorsunuz?", modifier = Modifier.padding(bottom = 12.dp))
+
+                    val sebepler = listOf("Geçersiz İsim", "Geçersiz Dükkan İsmi", "Hizmet Dışı Alan", "Diğer")
+
+                    sebepler.forEach { sebep ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { secilenRedSebebi = sebep }) {
+                            RadioButton(selected = (secilenRedSebebi == sebep), onClick = { secilenRedSebebi = sebep })
+                            Text(text = sebep, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+
+                    if (secilenRedSebebi == "Diğer") {
+                        OutlinedTextField(
+                            value = ozelRedSebebi,
+                            onValueChange = { ozelRedSebebi = it },
+                            label = { Text("Lütfen sebebi yazın") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    enabled = secilenRedSebebi.isNotEmpty() && (secilenRedSebebi != "Diğer" || ozelRedSebebi.isNotBlank()),
+                    onClick = {
+                        val finalSebep = if (secilenRedSebebi == "Diğer") ozelRedSebebi else secilenRedSebebi
+                        coroutineScope.launch {
+                            try {
+                                val istek = MusteriOnayIstegi(
+                                    musteri_id = reddedilecekMusteri!!.id,
+                                    yeni_durum = "engellendi",
+                                    sebep = finalSebep
+                                )
+                                val cevap = ApiClient.retrofitService.musteriOnayGuncelle(istek)
+                                if (cevap.basarili) {
+                                    listeyiYenile++
+                                    reddedilecekMusteri = null
+                                    secilenRedSebebi = ""
+                                    ozelRedSebebi = ""
+                                }
+                            } catch (e: Exception) {}
+                        }
+                    }
+                ) { Text("Onayla ve Reddet") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    reddedilecekMusteri = null
+                    secilenRedSebebi = ""
+                    ozelRedSebebi = ""
+                }) { Text("İptal") }
+            }
+        )
     }
 }
 
@@ -510,7 +640,7 @@ fun KarsilamaEkrani(girisYapTikladi: () -> Unit, kayitOlTikladi: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("SUHA AMBALAJ B2B", fontWeight = FontWeight.ExtraBold, fontSize = 28.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 32.dp))
+        Text("SUHA AMBALAJ ", fontWeight = FontWeight.ExtraBold, fontSize = 28.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 32.dp))
         Text("Sipariş vermek ve geçmiş siparişlerinizi takip etmek için giriş yapmalısınız.", textAlign = TextAlign.Center, color = Color.Gray, modifier = Modifier.padding(bottom = 24.dp))
 
         Button(onClick = { girisYapTikladi() }, modifier = Modifier.fillMaxWidth().height(55.dp)) {
@@ -695,20 +825,18 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
 
 // Eski ProfilVeSiparisEkrani içeriğimizi bu isme taşıdık
 @Composable
-    fun GecmisSiparislerEkrani(cikisYap: () -> Unit) {
+fun GecmisSiparislerEkrani(cikisYap: () -> Unit, detaylaraGit: (Int) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionManager = remember { SessionManager(context) }
 
-    // YENİ: Hafızadan müşterinin gerçek bilgilerini çekiyoruz
-    val musteriId = sessionManager.musteriIdGetir()
-    val yetkiliAdi = sessionManager.yetkiliAdiGetir()
+    // Hafızadan müşterinin gerçek bilgilerini çekiyoruz
+    val yetkiliAdi = sessionManager.yetkiliAdiGetir() ?: "Bilinmiyor"
 
     var siparisListesi by remember { mutableStateOf<List<SiparisOzet>>(emptyList()) }
     var yukleniyor by remember { mutableStateOf(true) }
     var hataMesaji by remember { mutableStateOf("") }
 
-    // YENİ: Ekran her açıldığında anlık zamanı anahtar (key) olarak veriyoruz ki
-    // Android "Bu sayfa yeni, verileri tekrar çekmeliyim" desin ve sayfayı zorla tazelesin.
+    // Ekran her açıldığında sayfayı zorla tazeleyen hiperaktif yapı
     LaunchedEffect(key1 = System.currentTimeMillis()) {
         yukleniyor = true
         try {
@@ -716,11 +844,11 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
             val cevap = ApiClient.retrofitService.siparisGecmisiniGetir(musteriId)
 
             if (cevap.basarili) {
-                // Eğer Node.js'ten gelen veri boş değilse listeye aktar
                 siparisListesi = cevap.siparisler ?: emptyList()
                 hataMesaji = ""
             } else {
-                hataMesaji = "Sipariş geçmişi yüklenemedi."            }
+                hataMesaji = "Sipariş geçmişi yüklenemedi."
+            }
         } catch (e: Exception) {
             hataMesaji = "Sunucu bağlantı hatası."
         } finally {
@@ -729,36 +857,45 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // YENİ: Başlık ve Çıkış Yap butonu aynı satıra alındı
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Profilim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary)
 
-            TextButton(onClick = { cikisYap() }) {
-                Text("Çıkış Yap", color = Color.Red, fontWeight = FontWeight.Bold)
+        // YENİ VE MODERN PROFİL KARTI (Müşteri No Silindi!)
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp, top = 8.dp),
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("İşletme Profiliniz", fontWeight = FontWeight.Black, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                    TextButton(onClick = { cikisYap() }) {
+                        Text("Çıkış Yap", color = Color.Red, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Divider(modifier = Modifier.padding(vertical = 12.dp), color = Color.Gray.copy(alpha = 0.2f))
+
+                Text(text = "Suha Ambalaj ", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                Text(text = "Yetkili: $yetkiliAdi", color = Color.DarkGray, fontSize = 16.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("İşletme: Suha Ambalaj B2B", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                // YENİ: Sabit isim yerine giriş yapan kişinin gerçek adı yazacak!
-                Text("Yetkili: $yetkiliAdi", color = Color.DarkGray, modifier = Modifier.padding(top = 4.dp))
-                Text("Müşteri No: #$musteriId", color = Color.DarkGray)
-            }
-        }
-
-        Text("Geçmiş Siparişlerim", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(bottom = 12.dp))
+        Text("Geçmiş Siparişlerim", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 12.dp))
 
         if (yukleniyor) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        } else if (hataMesaji.isNotEmpty()) {
+        } else if (hataMesaji.isNotEmpty() && siparisListesi.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(hataMesaji, color = Color.Red, fontWeight = FontWeight.Bold) }
         } else if (siparisListesi.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Henüz verilmiş bir siparişiniz bulunmamaktadır.", color = Color.Gray) }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(siparisListesi) { siparis ->
-                    SiparisKarti(siparis)
+                    // YENİ: Siparişe tıklandığında ID'sini alıp detay sayfasına yönlendiriyoruz
+                    SiparisKarti(siparis = siparis, detaylaraGit = { detaylaraGit(siparis.id) })
                 }
             }
         }
@@ -766,13 +903,43 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
 }
 
 @Composable
-fun SiparisKarti(siparis: SiparisOzet) {
+fun SiparisKarti(siparis: SiparisOzet, detaylaraGit: () -> Unit) {
     val guvenliDurum = siparis.siparis_durumu ?: "bekliyor"
     val durumRengi = when (guvenliDurum.lowercase()) {
-        "onaylandi" -> Color(0xFF10B981) // Yeşil
+        "onaylandi" -> Color(0xFF10B981)
         "iptal edildi" -> Color.Red
-        else -> Color(0xFFF59E0B) // Turuncu (Bekliyor)
+        else -> Color(0xFFF59E0B)
     }
+
+    // YENİ: Modifier.clickable ile karta tıklanabilme özelliği kazandırdık
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { detaylaraGit() },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "Sipariş #${siparis.id}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                Text(text = siparis.siparis_tarihi?.take(10) ?: "Tarih Yok", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(text = "${siparis.toplam_tutar} ₺", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                // YENİ: Sadece burada sağ altta bir kez durum yazıyor
+                Text(
+                    text = guvenliDurum.uppercase(),
+                    color = durumRengi,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+
 
 // Ekrana basarken de güvenliDurum'u büyük harfe çevirerek basıyoruz
     Text(
@@ -997,10 +1164,13 @@ fun MiktarSecimDialog(urun: Urun, kapat: () -> Unit, sepeteOnayla: (Double, Stri
 }
 
 @Composable
-fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean) {
-    val coroutineScope = rememberCoroutineScope()
+fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean, profilDuzenlemeyeGit: () -> Unit = {}) {    val coroutineScope = rememberCoroutineScope()
     var siparisGonderiliyor by remember { mutableStateOf(false) }
     var siparisSonucu by remember { mutableStateOf("") }
+    var uyariPenceresiAcik by remember { mutableStateOf(false) }
+    var uyariBasligi by remember { mutableStateOf("") }
+    var uyariMesaji by remember { mutableStateOf("") }
+    var musteriDurumu by remember { mutableStateOf("onayli") }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionManager = remember { SessionManager(context) }
@@ -1012,7 +1182,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sepetiniz boş.", color = Color.Gray) }
         } else {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                // YENİ: Eleman silindiğinde çökme (ConcurrentModificationException) yaşanmaması için toList() eklendi
                 sepetListesi.toList().forEach { eleman ->
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -1022,16 +1191,14 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                             }
                         }
 
-                        // YENİ: Arttır / Azalt / Sil Butonları
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = {
                                 val guncelIndex = sepetListesi.indexOf(eleman)
                                 if (guncelIndex != -1) {
                                     if (eleman.miktar > 1) {
-                                        // 1'den büyükse azalt
+                                        // HATA DÜZELTİLDİ: - işareti eklendi
                                         sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar - 1)
                                     } else {
-                                        // Miktar 1 ise tamamen listeden çıkar
                                         sepetListesi.removeAt(guncelIndex)
                                     }
                                 }
@@ -1051,7 +1218,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                             IconButton(onClick = {
                                 val guncelIndex = sepetListesi.indexOf(eleman)
                                 if (guncelIndex != -1) {
-                                    // Sadece miktarı arttır
                                     sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar + 1)
                                 }
                             }) {
@@ -1073,40 +1239,58 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                         return@Button
                     }
 
-                    val onayDurumu = sessionManager.onayDurumuGetir()
-                    if (onayDurumu == "bekliyor") {
-                        siparisSonucu = "Sipariş yetkiniz yönetici onayındadır. Lütfen bekleyiniz."
-                        return@Button
-                    }
-                    if (onayDurumu == "engellendi" || onayDurumu == "onaysiz") {
-                        siparisSonucu = "Sipariş verme yetkiniz bulunmamaktadır."
-                        return@Button
-                    }
-
                     siparisGonderiliyor = true
                     siparisSonucu = ""
+
                     coroutineScope.launch {
                         try {
-                            var toplamTutar = 0.0
-                            val detayListesi = sepetListesi.map { eleman ->
-                                val fiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
-                                val araToplam = fiyat * eleman.miktar
-                                toplamTutar += araToplam
-                                SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam, eleman.secilenBirim)
-                            }
-
                             val gercekMusteriId = sessionManager.musteriIdGetir()
-                            val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(gercekMusteriId, toplamTutar, detayListesi))
 
-                            if (cevap.basarili) {
-                                siparisSonucu = "Sipariş Başarıyla İletildi! ✓"
-                                delay(2000)
-                                sepetListesi.clear()
-                                siparisSonucu = ""
-                            } else {
-                                siparisSonucu = "Hata: ${cevap.mesaj}"
+                            // YENİ: KASADAN GEÇMEDEN ÖNCE YÖNETİCİNİN KARARINI SORGULA
+                            val durumCevap = ApiClient.retrofitService.musteriDurumuGetir(gercekMusteriId)
+
+                            if (durumCevap.basarili) {
+                                musteriDurumu = durumCevap.durum ?: "bekliyor"
+
+                                when (musteriDurumu) {
+                                    "onayli" -> {
+                                        var toplamTutar = 0.0
+                                        val detayListesi = sepetListesi.map { eleman ->
+                                            val fiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
+                                            val araToplam = fiyat * eleman.miktar
+                                            toplamTutar += araToplam
+                                            SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam, eleman.secilenBirim ?: "")
+                                        }
+
+                                        val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(gercekMusteriId, toplamTutar, detayListesi))
+
+                                        if (cevap.basarili) {
+                                            siparisSonucu = "Sipariş Başarıyla İletildi! ✓"
+                                            delay(2000)
+                                            sepetListesi.clear()
+                                            siparisSonucu = ""
+                                        } else {
+                                            siparisSonucu = "Hata: ${cevap.mesaj}"
+                                        }
+                                    }
+                                    "bekliyor" -> {
+                                        uyariBasligi = "Hesabınız Onay Aşamasında"
+                                        uyariMesaji = "Sipariş verebilmek için yönetici onayını beklemelisiniz. Uygulamayı incelemeye devam edebilirsiniz."
+                                        uyariPenceresiAcik = true
+                                    }
+                                    "engellendi" -> {
+                                        uyariBasligi = "Sipariş Verilemiyor"
+                                        val sebep = durumCevap.sebep ?: "Bilinmeyen bir sebep"
+                                        uyariMesaji = "Hesabınız şu sebeple askıya alınmıştır:\n$sebep\n\nLütfen profil bilgilerinizi güncelleyerek tekrar onaya gönderin."
+                                        uyariPenceresiAcik = true
+                                    }
+                                }
                             }
-                        } catch (e: Exception) { siparisSonucu = "Sunucuya bağlanılamadı!" } finally { siparisGonderiliyor = false }
+                        } catch (e: Exception) {
+                            siparisSonucu = "Sunucuya bağlanılamadı!"
+                        } finally {
+                            siparisGonderiliyor = false
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(55.dp).padding(top = 8.dp),
@@ -1114,6 +1298,26 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                 enabled = !siparisGonderiliyor
             ) { Text(if (siparisGonderiliyor) "Sipariş Mühürleniyor..." else "Siparişi İlet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
         }
+    }
+
+    // YENİ: DURUM UYARI PENCERESİ
+    if (uyariPenceresiAcik) {
+        AlertDialog(
+            onDismissRequest = { uyariPenceresiAcik = false },
+            title = { Text(uyariBasligi, color = Color.Red, fontWeight = FontWeight.ExtraBold) },
+            text = { Text(uyariMesaji, fontSize = 16.sp) },
+            confirmButton = {
+                if (musteriDurumu == "engellendi") {
+                    Button(onClick = {
+                        uyariPenceresiAcik = false
+                        profilDuzenlemeyeGit() // Butona basılınca 5. sekmeye uçur!
+                    }) { Text("Bilgilerimi Düzenle") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { uyariPenceresiAcik = false }) { Text("Anladım") }
+            }
+        )
     }
 }
 
@@ -1255,5 +1459,137 @@ fun YeniUrunEkleDialog(kapat: () -> Unit, urunEklendi: () -> Unit) {
             TextButton(onClick = { kapat() }, enabled = !islemYapiliyor) { Text("İptal", color = Color.Gray) }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProfilDuzenlemeEkrani(geriyeDon: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sessionManager = remember { SessionManager(context) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var dukkanAdi by remember { mutableStateOf("") }
+    var yetkiliAdi by remember { mutableStateOf(sessionManager.yetkiliAdiGetir() ?: "") }
+    var telefon by remember { mutableStateOf("") }
+    var yukleniyor by remember { mutableStateOf(false) }
+    var islemMesaji by remember { mutableStateOf("") }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // BAŞLIK VE GERİ BUTONU
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = geriyeDon) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri", tint = MaterialTheme.colorScheme.primary)
+            }
+            Text("Bilgilerimi Düzenle", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
+        }
+
+        // BİLGİ KARTI
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Info, contentDescription = "Bilgi", tint = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = "Bilgilerinizi güncellediğinizde hesabınız tekrar onaya gönderilecektir. Yöneticimiz inceledikten sonra sipariş vermeye devam edebilirsiniz.",
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(start = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // MODERN GİRİŞ ALANLARI
+        OutlinedTextField(
+            value = dukkanAdi,
+            onValueChange = { dukkanAdi = it },
+            label = { Text("Dükkan / İşletme Adı") },
+            leadingIcon = { Icon(Icons.Filled.ShoppingCart, contentDescription = "Dükkan") },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = yetkiliAdi,
+            onValueChange = { yetkiliAdi = it },
+            label = { Text("Yetkili Adı Soyadı") },
+            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = "Kişi") },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = telefon,
+            onValueChange = { yeniDeger ->
+                val sadeceRakam = yeniDeger.filter { it.isDigit() }
+                if (sadeceRakam.startsWith("0")) {
+                    telefon = sadeceRakam.drop(1).take(10)
+                } else {
+                    telefon = sadeceRakam.take(10)
+                }
+            },
+            label = { Text("Telefon Numarası") },
+            leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = "Telefon") },
+            prefix = { Text("+90 ", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+
+        if (islemMesaji.isNotEmpty()) {
+            Text(
+                text = islemMesaji,
+                color = if (islemMesaji.contains("Başarılı")) Color(0xFF10B981) else Color.Red,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp).align(Alignment.CenterHorizontally)
+            )
+        }
+
+        // KAYDET BUTONU (Node.js Sunucusuna Bağlandı)
+        Button(
+            onClick = {
+                yukleniyor = true
+                islemMesaji = "Güncelleme isteği gönderiliyor..."
+
+                coroutineScope.launch {
+                    try {
+                        val musteriId = sessionManager.musteriIdGetir()
+                        // Başına '0' ekleyerek sunucuya 05xx formatında yolluyoruz
+                        val temizTelefon = "0$telefon"
+
+                        val istek = ProfilGuncelleIstegi(musteriId, dukkanAdi, yetkiliAdi, temizTelefon)
+                        val cevap = ApiClient.retrofitService.profilGuncelle(istek)
+
+                        if (cevap.basarili) {
+                            islemMesaji = "Başarılı: Hesabınız tekrar onaya gönderildi."
+                            // 2 saniye mesajı gösterip sepete geri yolla
+                            kotlinx.coroutines.delay(2000)
+                            geriyeDon()
+                        } else {
+                            islemMesaji = "Hata: ${cevap.mesaj}"
+                        }
+                    } catch (e: Exception) {
+                        islemMesaji = "Sunucuya bağlanılamadı!"
+                    } finally {
+                        yukleniyor = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(55.dp),
+            shape = RoundedCornerShape(12.dp),
+            // YENİ: Numara 10 hane olana kadar buton kilitli kalacak
+            enabled = !yukleniyor && dukkanAdi.isNotBlank() && yetkiliAdi.isNotBlank() && telefon.length == 10
+        ) {
+            if (yukleniyor) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+            } else {
+                Text("Bilgilerimi Güncelle ve Onaya Gönder", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 

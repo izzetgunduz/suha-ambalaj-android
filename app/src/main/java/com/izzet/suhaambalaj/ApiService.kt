@@ -31,7 +31,8 @@ data class SiparisDetayElemani(
     val miktar: Double,
     val birim_fiyati: String,
     val ara_toplam: String,
-    val urun_adi: String
+    val urun_adi: String,
+    val birim: String? // YENİ EKLENDİ: Okurken de birimi alıyoruz
 )
 
 data class SiparisDetayCevabi(
@@ -65,6 +66,14 @@ data class Musteri(
     val onay_durumu: String?
 )
 
+
+data class MusteriDurumCevap(
+    val basarili: Boolean,
+    val durum: String?,
+    val sebep: String?
+)
+
+
 data class MusteriListesiCevabi(
     val basarili: Boolean,
     val musteriler: List<Musteri>?
@@ -72,9 +81,9 @@ data class MusteriListesiCevabi(
 
 data class MusteriOnayIstegi(
     val musteri_id: Int,
-    val yeni_durum: String
+    val yeni_durum: String,
+    val sebep: String? = null // YENİ: Node.js'e reddetme sebebini iletecek opsiyonel alan
 )
-
 // 1. Müşteri Kayıt İstek/Cevap Kalıpları
 data class KayitIstegi(
     val dukkanAdi: String,
@@ -104,7 +113,18 @@ data class GirisCevabi(
     val onay_durumu: String?
 )
 
-// ... (Buradan sonrası aynı: UrunCevabi, SiparisDetay vb.)
+data class ProfilGuncelleIstegi(
+    val musteri_id: Int,
+    val dukkan_adi: String,
+    val yetkili_adi: String,
+    val telefon: String
+)
+
+data class GenelCevap(
+    val basarili: Boolean,
+    val mesaj: String
+)
+
 
 // 2. Ürün Çekme İstek/Cevap Kalıpları
 data class UrunCevabi(
@@ -139,7 +159,7 @@ data class SiparisDetay(
     val miktar: Double,
     val birim_fiyati: Double,
     val ara_toplam: Double,
-    val birim: String // YENİ EKLENDİ
+    val birim: String // Senin eklediğin, DOĞRU.
 )
 
 data class SiparisIstegi(
@@ -149,12 +169,11 @@ data class SiparisIstegi(
 )
 
 // 4. YENİ: Sipariş Geçmişi Çekme Kalıpları
-// YENİ: Sipariş Geçmişi Çekme Kalıpları
 data class SiparisOzet(
     val id: Int,
-    val toplam_tutar: String, // Numeric değer string olarak gelebilir
-    val siparis_durumu: String,
-    val siparis_tarihi: String
+    val toplam_tutar: String?, // Sayısal uyuşmazlıkları önlemek için String yapıyoruz
+    val siparis_durumu: String?,
+    val siparis_tarihi: String?
 )
 
 data class SiparisGecmisiCevabi(
@@ -163,7 +182,7 @@ data class SiparisGecmisiCevabi(
 )
 
 // 5. API İsteklerimizi Tanımladığımız Arayüz
-interface SuhaAmbalajApi {
+    interface SuhaAmbalajApi {
     @POST("/api/kayit")
     suspend fun musteriKaydet(@Body istek: KayitIstegi): SunucuCevabi
 
@@ -205,7 +224,12 @@ interface SuhaAmbalajApi {
     @POST("/api/urun-ekle")
     suspend fun urunEkle(@Body istek: UrunEkleIstegi): UrunEkleCevabi
 
+    @GET("api/musteri-durum/{id}")
+    suspend fun musteriDurumuGetir(@Path("id") musteriId: Int): MusteriDurumCevap
 
+
+    @POST("api/musteri-guncelle")
+    suspend fun profilGuncelle(@Body istek: ProfilGuncelleIstegi): GenelCevap
 }
 
 // 6. Retrofit İstemcisi (Motoru)
