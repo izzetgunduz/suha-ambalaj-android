@@ -126,11 +126,30 @@ data class GenelCevap(
 )
 
 
-// 2. Ürün Çekme İstek/Cevap Kalıpları
-data class UrunCevabi(
+data class Kategori(
+    val id: Int,
+    val kategori_adi: String,
+    val ust_kategori_id: Int?
+)
+
+data class KategoriCevap(
     val basarili: Boolean,
-    val urun_sayisi: Int,
-    val urunler: List<Urun>
+    val mesaj: String?,
+    val kategoriler: List<Kategori>?
+)
+
+data class AltKategoriCevap(
+    val basarili: Boolean,
+    val mesaj: String?,
+    val altKategoriler: List<Kategori>? // Daha önce oluşturduğumuz Kategori sınıfını tekrar kullanıyoruz
+)
+
+
+// 2. Ürün Çekme İstek/Cevap Kalıpları
+data class UrunCevap(
+    val basarili: Boolean,
+    val mesaj: String?,
+    val urunler: List<Urun>?
 )
 
 data class Urun(
@@ -138,13 +157,15 @@ data class Urun(
     val urun_adi: String,
     val marka: String,
     val satis_birimi: String,
+    val olcu: String?, // Veritabanına yeni eklediğimiz ölçü sütunu
     val birim_detayi: String,
     val taban_fiyati: String,
     val urun_tipi: String,
     val koli_ici_paket: Int,
     val paket_ici_adet: Int,
     val kategori_adi: String,
-    val stokta_var_mi: Boolean? = true
+    val stokta_var_mi: Boolean? = true,
+    val fotograf_url: String?
 )
 
 // YENİ EKLENEN: Ayar ve Stok Kalıpları
@@ -191,7 +212,7 @@ data class SiparisGecmisiCevabi(
     suspend fun girisYap(@Body istek: GirisIstegi): GirisCevabi
 
     @GET("/api/urunler")
-    suspend fun urunleriGetir(): UrunCevabi
+    suspend fun urunleriGetir(): UrunCevap
 
     @POST("/api/siparis")
     suspend fun siparisGonder(@Body istek: SiparisIstegi): SunucuCevabi
@@ -230,6 +251,21 @@ data class SiparisGecmisiCevabi(
 
     @POST("api/musteri-guncelle")
     suspend fun profilGuncelle(@Body istek: ProfilGuncelleIstegi): GenelCevap
+
+
+    @GET("api/kategoriler/ana")
+    suspend fun anaKategorileriGetir(): KategoriCevap
+
+
+    @GET("api/kategoriler/alt/{ust_id}")
+    suspend fun altKategorileriGetir(@Path("ust_id") ustId: Int): AltKategoriCevap
+
+
+    @GET("api/urunler/kategori/{kategori_id}")
+    suspend fun kategoriUrunleriniGetir(@Path("kategori_id") kategoriId: Int): UrunCevap
+
+
+
 }
 
 // 6. Retrofit İstemcisi (Motoru)
