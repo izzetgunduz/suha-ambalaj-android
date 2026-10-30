@@ -8,6 +8,15 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 
+// YENİ: Node.js'e gönderilecek varyant kalıbı
+data class VaryantIstegi(
+    val renk: String,
+    val olcu: String,
+    val ek_fiyat: Double,
+    val stokta_var_mi: Boolean = true
+)
+
+// GÜNCELLENDİ: Artık varyant listesini de barındırıyor
 data class UrunEkleIstegi(
     val kategori_id: Int,
     val urun_adi: String,
@@ -16,9 +25,9 @@ data class UrunEkleIstegi(
     val birim_detayi: String,
     val taban_fiyati: String,
     val fotograflar: List<String>?,
-    val stokta_var_mi: Boolean
+    val stokta_var_mi: Boolean,
+    val varyantlar: List<VaryantIstegi> // YENİ EKLENDİ
 )
-
 data class UrunEkleCevabi(
     val basarili: Boolean,
     val mesaj: String,
@@ -152,12 +161,21 @@ data class UrunCevap(
     val urunler: List<Urun>?
 )
 
+// YENİ EKLENEN: Varyant Veri Sınıfı
+data class Varyant(
+    val id: Int,
+    val renk: String?,
+    val olcu: String?,
+    val ek_fiyat: Double,
+    val stokta_var_mi: Boolean
+)
+
 data class Urun(
     val id: Int,
     val urun_adi: String,
     val marka: String,
     val satis_birimi: String,
-    val olcu: String?, // Veritabanına yeni eklediğimiz ölçü sütunu
+    val olcu: String?, 
     val birim_detayi: String,
     val taban_fiyati: String,
     val urun_tipi: String,
@@ -165,7 +183,8 @@ data class Urun(
     val paket_ici_adet: Int,
     val kategori_adi: String,
     val stokta_var_mi: Boolean? = true,
-    val fotograf_url: String?
+    val fotograf_url: String?,
+    val varyantlar: List<Varyant>? = emptyList() // YENİ: Ürünün alt varyantları
 )
 
 // YENİ EKLENEN: Ayar ve Stok Kalıpları
@@ -180,7 +199,8 @@ data class SiparisDetay(
     val miktar: Double,
     val birim_fiyati: Double,
     val ara_toplam: Double,
-    val birim: String // Senin eklediğin, DOĞRU.
+    val birim: String,
+    val varyant_bilgisi: String? // YENİ: Backend'e göndermek için
 )
 
 data class SiparisIstegi(
@@ -268,9 +288,8 @@ data class SiparisGecmisiCevabi(
 
 }
 
-// 6. Retrofit İstemcisi (Motoru)
 object ApiClient {
-    private const val BASE_URL = "http://10.0.2.2:3000/"
+    private const val BASE_URL = "http://64.226.125.60:3000/"
 
     val retrofitService: SuhaAmbalajApi by lazy {
         Retrofit.Builder()
