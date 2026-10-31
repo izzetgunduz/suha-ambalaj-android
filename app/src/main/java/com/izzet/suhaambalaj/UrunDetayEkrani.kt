@@ -49,26 +49,28 @@ fun UrunDetayEkrani(
     urun: Urun,
     fiyatlarGizliMi: Boolean,
     geriyeDon: () -> Unit,
-    sepeteOnayla: (Urun, Double, String, Varyant?) -> Unit
+    // YENİ: Callback'e 5. parametre olarak "Ozet Metni" eklendi (String)
+    sepeteOnayla: (Urun, Double, String, Varyant?, String) -> Unit
 ) {
-    // Ürüne ait benzersiz renkleri ve ölçüleri listeliyoruz
     val renkler = urun.varyantlar?.mapNotNull { it.renk }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
     val olculer = urun.varyantlar?.mapNotNull { it.olcu }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
 
-    // Varsayılan seçimleri ayarlıyoruz
     var seciliRenk by remember { mutableStateOf(renkler.firstOrNull() ?: "") }
     var seciliOlcu by remember { mutableStateOf(olculer.firstOrNull() ?: "") }
-
-    // Aktif varyantı buluyoruz (Seçili renk ve ölçüye uyan veritabanı satırı)
     val aktifVaryant = urun.varyantlar?.find { it.renk == seciliRenk && it.olcu == seciliOlcu }
 
     var secilenBirim by remember { mutableStateOf(if (urun.urun_tipi == "Koli") "Koli" else urun.satis_birimi) }
     var miktar by remember { mutableDoubleStateOf(1.0) }
 
-    // Fiyat Hesaplama
+    // YENİ: Koli / Paket Fiyat Hesaplama Mantığı
     val tabanFiyat = urun.taban_fiyati.toDoubleOrNull() ?: 0.0
     val ekFiyat = aktifVaryant?.ek_fiyat ?: 0.0
-    val guncelBirimFiyat = tabanFiyat + ekFiyat
+
+    // Eğer koli satılan bir ürün "Paket" olarak seçildiyse, fiyatı koli içi paket sayısına böler
+    val koliIciPaketSayisi = urun.koli_ici_paket ?: 1
+    val bolen = if (secilenBirim == "Paket" && urun.urun_tipi == "Koli" && koliIciPaketSayisi > 0) koliIciPaketSayisi else 1
+
+    val guncelBirimFiyat = (tabanFiyat + ekFiyat) / bolen
     val toplamTutar = guncelBirimFiyat * miktar
 
     Scaffold(
@@ -79,7 +81,6 @@ fun UrunDetayEkrani(
             }
         },
         bottomBar = {
-            // ALT SABİT SATIN ALMA PANELİ
             Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     if (!fiyatlarGizliMi) {
@@ -90,18 +91,23 @@ fun UrunDetayEkrani(
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        // Miktar Ayarlayıcı
                         Row(modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { if (miktar > 1) miktar -= 1 }) { Text("-", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary) }
                             Text(text = if (miktar % 1.0 == 0.0) miktar.toInt().toString() else miktar.toString(), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 12.dp))
                             IconButton(onClick = { miktar += 1 }) { Text("+", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary) }
                         }
-
                         Spacer(modifier = Modifier.width(16.dp))
-
-                        // Sepete Ekle Butonu
                         Button(
-                            onClick = { sepeteOnayla(urun, miktar, secilenBirim, aktifVaryant) },
+                            onClick = {
+                                // YENİ: Profesyonel Sipariş Özeti Cümlesi Oluşturucu
+                                val miktarStr = if (miktar % 1.0 == 0.0) miktar.toInt().toString() else miktar.toString()
+                                val renkStr = if (seciliRenk.isNotBlank()) "$seciliRenk " else ""
+                                val olcuStr = if (seciliOlcu.isNotBlank()) "$seciliOlcu " else ""
+                                // Çıktı Örneği: "5 Paket - Siyah Küçük Şeffaf Poşet"
+                                // "1 koli" kısmını sildik, doğrudan okla ve renkle başlıyor
+                                val siparisOzeti = "> $renkStr$olcuStr${urun.urun_adi}".trim()
+                                sepeteOnayla(urun, miktar, secilenBirim, aktifVaryant, siparisOzeti)
+                            },
                             modifier = Modifier.weight(1f).height(50.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
@@ -113,68 +119,49 @@ fun UrunDetayEkrani(
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).verticalScroll(rememberScrollState())) {
-
-            // 1. ÜRÜN GÖRSELİ
             Box(modifier = Modifier.fillMaxWidth().height(250.dp).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
                 Text("Ürün Görseli", color = Color.Gray, fontWeight = FontWeight.Bold)
             }
-
             Column(modifier = Modifier.padding(16.dp)) {
-
-                // 2. ÜRÜN BİLGİ HİYERARŞİSİ (Örn: 1 Koli = 10 Paket)
                 Text(text = urun.urun_adi, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, modifier = Modifier.padding(bottom = 8.dp))
                 if (!urun.birim_detayi.isNullOrBlank()) {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                         Text(text = "📦 Hiyerarşi: ${urun.birim_detayi}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(12.dp))
                     }
                 }
-
-
                 Divider(color = Color.LightGray.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 8.dp))
 
-                // 3. RENK SEÇENEKLERİ (Modern Çipler)
                 if (renkler.isNotEmpty()) {
                     Text("Renk Seçimi", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
                         items(renkler.size) { index ->
                             val renk = renkler[index]
-                            ModernFiltreButonu(
-                                metin = renk,
-                                secili = seciliRenk == renk
-                            ) { seciliRenk = renk }
+                            ModernFiltreButonu(metin = renk, secili = seciliRenk == renk) { seciliRenk = renk }
                         }
                     }
                 }
 
-                // 4. EBAT / ÖLÇÜ SEÇENEKLERİ (Modern Çipler)
                 if (olculer.isNotEmpty()) {
                     Text("Ebat / Ölçü Seçimi", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
                         items(olculer.size) { index ->
                             val olcu = olculer[index]
-                            // Seçili renge ait bu ölçüde varyant var mı diye kontrol edip fiyat farkını yazdırıyoruz
                             val uyumluVaryant = urun.varyantlar?.find { it.renk == seciliRenk && it.olcu == olcu }
                             val fiyatFarkiMetni = if (uyumluVaryant != null && uyumluVaryant.ek_fiyat > 0 && !fiyatlarGizliMi) " (+${uyumluVaryant.ek_fiyat} ₺)" else ""
-
-                            ModernFiltreButonu(
-                                metin = "$olcu$fiyatFarkiMetni",
-                                secili = seciliOlcu == olcu
-                            ) { seciliOlcu = olcu }
+                            ModernFiltreButonu(metin = "$olcu$fiyatFarkiMetni", secili = seciliOlcu == olcu) { seciliOlcu = olcu }
                         }
                     }
                 }
 
-                // 5. ALIM BİRİMİ SEÇİMİ (Koli / Paket / Kg)
-                Text("Alım Şekli", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+                Text("Alım Şekli (Birim)", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
                     val gecerliBirimler = mutableListOf(urun.satis_birimi)
-                    if (urun.urun_tipi == "Koli" && urun.koli_ici_paket > 0) gecerliBirimler.add("Paket") // Koli ise paketi de seçenek yap
+                    // YENİ: Ürün koli ise, "Paket" seçeneğini de dinamik olarak ekrana çıkarıyoruz
+                    val koliPaketSayisi = urun.koli_ici_paket ?: 0
+                    if (urun.urun_tipi == "Koli" && koliPaketSayisi > 0) gecerliBirimler.add("Paket")
 
                     gecerliBirimler.distinct().forEach { birim ->
-                        ModernFiltreButonu(
-                            metin = birim,
-                            secili = secilenBirim == birim
-                        ) { secilenBirim = birim }
+                        ModernFiltreButonu(metin = birim, secili = secilenBirim == birim) { secilenBirim = birim }
                     }
                 }
             }

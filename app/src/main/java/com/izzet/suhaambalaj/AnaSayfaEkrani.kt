@@ -60,11 +60,12 @@ fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Bo
         }
     }
 
-    val filtrelenmisUrunler = urunListesi.filter {
-        it.urun_adi.contains(aramaMetni, ignoreCase = true) || it.kategori_adi.contains(
-            aramaMetni,
-            ignoreCase = true
-        )
+    val filtrelenmisUrunler = urunListesi.filter { urun ->
+        val urunAdiUyar = urun.urun_adi.contains(aramaMetni, ignoreCase = true)
+        val kategoriAdiUyar = urun.kategori_adi?.contains(aramaMetni, ignoreCase = true) ?: false
+        val markaUyar = urun.marka?.contains(aramaMetni, ignoreCase = true) ?: false
+
+        urunAdiUyar || kategoriAdiUyar || markaUyar
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {

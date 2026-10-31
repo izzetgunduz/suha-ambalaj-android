@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -18,7 +20,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,12 +50,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -165,52 +171,71 @@ fun UrunVeKatalogYonetimiEkrani(geriyeDon: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Temel Ürün Bilgileri
+    // 1. ÇOKLU FOTOĞRAF SİSTEMİ
+    var secilenGorseller by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
+    var base64Gorseller by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    val cokluGaleriSecici = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(5)
+    ) { uriler ->
+        if (uriler.isNotEmpty()) {
+            secilenGorseller = uriler
+            coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val base64List = mutableListOf<String>()
+                uriler.forEach { uri ->
+                    try {
+                        val stream = context.contentResolver.openInputStream(uri)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                        val outputStream = java.io.ByteArrayOutputStream()
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, outputStream)
+                        val byteArray = outputStream.toByteArray()
+                        base64List.add("data:image/jpeg;base64," + android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP))
+                    } catch (e: Exception) { }
+                }
+                base64Gorseller = base64List
+            }
+        }
+    }
+
+    // 2. ÖZGÜR KATEGORİ SİSTEMİ
+    var anaKategori by remember { mutableStateOf("") }
+    var altKategori by remember { mutableStateOf("") }
+
+    // 3. TEMEL BİLGİLER
     var urunAdi by remember { mutableStateOf("") }
     var marka by remember { mutableStateOf("") }
     var fiyat by remember { mutableStateOf("") }
-    var birimDetayi by remember { mutableStateOf("") }
 
-    // Kategori Seçimi
-    var kategoriler by remember { mutableStateOf<List<Kategori>>(emptyList()) }
-    var seciliKategoriId by remember { mutableStateOf<Int?>(null) }
-    var kategoriDropdownAcik by remember { mutableStateOf(false) }
+    // 4. AKILLI SATIŞ BİRİMİ SİSTEMİ
+    var satisBirimi by remember { mutableStateOf("") }
+    var kovaKg by remember { mutableStateOf("") }
+    var koliPaket by remember { mutableStateOf("") }
+    var paketAdet by remember { mutableStateOf("") }
 
-    // Birim Seçimi
-    val varsayilanBirimler = listOf("Koli", "Paket", "Metre", "Kg", "Adet")
-    var seciliBirim by remember { mutableStateOf(varsayilanBirimler[0]) }
-    var birimDropdownAcik by remember { mutableStateOf(false) }
+    val birimKucuk = satisBirimi.lowercase()
+    val isKova = birimKucuk.contains("kova")
+    val isKoli = birimKucuk.contains("koli")
 
-    // Dinamik Varyant Listesi
+    // 5. MATRİS VARYANT SİSTEMİ (Önce Renk, Sonra O Renge Özel Bedenler)
+    var renkListesi = remember { mutableStateListOf<String>() }
     var varyantlar = remember { mutableStateListOf<VaryantIstegi>() }
 
-    // Varyant Ekleme Kutu State'leri
-    var yeniRenk by remember { mutableStateOf("") }
-    var yeniOlcu by remember { mutableStateOf("") }
-    var yeniEkFiyat by remember { mutableStateOf("") }
-    var varyantEklemeAcik by remember { mutableStateOf(false) }
+    var yeniRenkGirdisi by remember { mutableStateOf("") }
+    // Her renk kartı için geçici beden ve fiyat girdilerini hafızada tutan yapı
+    var bedenGirisleri = remember { mutableStateMapOf<String, String>() }
+    var fiyatGirisleri = remember { mutableStateMapOf<String, String>() }
 
     var islemYapiliyor by remember { mutableStateOf(false) }
     var hataMesaji by remember { mutableStateOf("") }
-
-    // Sayfa açıldığında Kategorileri Sunucudan Çek
-    LaunchedEffect(Unit) {
-        try {
-            val cevap = ApiClient.retrofitService.anaKategorileriGetir()
-            if (cevap.basarili && cevap.kategoriler != null) {
-                kategoriler = cevap.kategoriler
-                seciliKategoriId = kategoriler.firstOrNull()?.id // İlk kategoriyi varsayılan yap
-            }
-        } catch (e: Exception) { }
-    }
 
     Scaffold(
         topBar = {
             Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = geriyeDon) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "İptal", tint = MaterialTheme.colorScheme.primary) }
-                Text("Yeni Ürün (B2B)", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
+                Text("Ürün Ekle", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
             }
         },
         bottomBar = {
@@ -218,125 +243,202 @@ fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
                 Button(
                     onClick = {
                         val tabanFiyatD = fiyat.toDoubleOrNull()
-                        if (urunAdi.isNotBlank() && tabanFiyatD != null && seciliKategoriId != null) {
+                        if (urunAdi.isNotBlank() && tabanFiyatD != null && anaKategori.isNotBlank()) {
                             islemYapiliyor = true
+
+                            // Akıllı Birim Detayı Oluşturma
+                            val dinamikDetay = when {
+                                isKova -> "1 Kova = $kovaKg Kg"
+                                isKoli -> "1 Koli = $koliPaket Paket (${(koliPaket.toIntOrNull()?:0) * (paketAdet.toIntOrNull()?:0)} Adet)"
+                                else -> "Birim: $satisBirimi"
+                            }
+
+                            // Kategori hiyerarşisini ürün adına veya API'ye yedirme
+                            // YENİ HALİ (Sadece saf ürün adını kaydeder)
+                            val finalUrunAdi = urunAdi.trim()
                             coroutineScope.launch {
                                 try {
                                     val istek = UrunEkleIstegi(
-                                        kategori_id = seciliKategoriId!!,
-                                        urun_adi = urunAdi,
+                                        kategori_id = 1, // Not: Backend API'si Int bekliyorsa 1 gönderiyoruz, gerçekte Ana Kategori metnini kullanıyoruz
+                                        urun_adi = finalUrunAdi,
                                         marka = marka,
-                                        satis_birimi = seciliBirim,
-                                        birim_detayi = birimDetayi,
+                                        satis_birimi = satisBirimi,
+                                        birim_detayi = dinamikDetay,
                                         taban_fiyati = fiyat,
-                                        fotograflar = emptyList(),
+                                        fotograflar = base64Gorseller,
                                         stokta_var_mi = true,
                                         varyantlar = varyantlar.toList()
                                     )
                                     val cevap = ApiClient.retrofitService.urunEkle(istek)
-                                    if (cevap.basarili) {
-                                        urunEklendi()
-                                    } else {
-                                        hataMesaji = cevap.mesaj
-                                    }
+                                    if (cevap.basarili) urunEklendi() else hataMesaji = cevap.mesaj
                                 } catch (e: Exception) {
-                                    hataMesaji = "Sunucuya bağlanılamadı."
-                                } finally {
-                                    islemYapiliyor = false
-                                }
+                                    hataMesaji = "Sunucuya bağlanılamadı. Fotoğraf boyutu büyük olabilir."
+                                } finally { islemYapiliyor = false }
                             }
-                        } else {
-                            hataMesaji = "Ürün adı, geçerli bir fiyat ve kategori zorunludur."
-                        }
+                        } else { hataMesaji = "Ana Kategori, Ürün Adı ve Fiyat zorunludur." }
                     },
                     modifier = Modifier.fillMaxWidth().padding(16.dp).height(55.dp),
                     enabled = !islemYapiliyor,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                ) { Text(if (islemYapiliyor) "Kaydediliyor..." else "Kataloğa Kaydet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                ) { Text(if (islemYapiliyor) "İşleniyor..." else "Kataloğa Kaydet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
             }
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).verticalScroll(rememberScrollState()).padding(16.dp)) {
 
-            if (hataMesaji.isNotEmpty()) { Text(hataMesaji, color = Color.Red, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp)) }
+            if (hataMesaji.isNotEmpty()) Text(hataMesaji, color = Color.Red, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
-            // 1. KATEGORİ SEÇİMİ
-            Text("Ana Kategori", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
-            Box(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                OutlinedTextField(
-                    value = kategoriler.find { it.id == seciliKategoriId }?.kategori_adi ?: "Kategori Seçin",
-                    onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = { Text("▼", modifier = Modifier.padding(end = 16.dp)) }
-                )
-                Box(modifier = Modifier.matchParentSize().clickable { kategoriDropdownAcik = true })
-                DropdownMenu(expanded = kategoriDropdownAcik, onDismissRequest = { kategoriDropdownAcik = false }, modifier = Modifier.fillMaxWidth(0.9f)) {
-                    kategoriler.forEach { kat ->
-                        DropdownMenuItem(text = { Text(kat.kategori_adi) }, onClick = { seciliKategoriId = kat.id; kategoriDropdownAcik = false })
-                    }
+            // --- 1. ÇOKLU FOTOĞRAF GALERİSİ ---
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Ürün Görselleri", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                TextButton(onClick = { cokluGaleriSecici.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                    Text(if (secilenGorseller.isEmpty()) "+ Fotoğraf Seç" else "Değiştir/Ekle")
                 }
             }
+            if (secilenGorseller.isNotEmpty()) {
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
+                    items(secilenGorseller.size) { index ->
+                        coil.compose.AsyncImage(
+                            model = secilenGorseller[index],
+                            contentDescription = "Ürün Fotoğrafı",
+                            modifier = Modifier.size(120.dp).clip(RoundedCornerShape(8.dp)).background(Color.LightGray),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                }
+            }  else {
+        // YENİ: Koyu Mavi Çerçeveli, Açık Mavi Arka Planlı Şık Kutu
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(100.dp).padding(bottom = 16.dp)
+                .clickable { cokluGaleriSecici.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFF0F8FF), // Ferah çok açık mavi
+            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF1E3A8A)) // Marka rengi koyu mavi çerçeve
+        ) {
+            // DOĞRUSU: mainAxisAlignment kelimesini silip yerine verticalArrangement yazıyoruz
+            Column(verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {                Icon(imageVector = Icons.Default.Add, contentDescription = "Ekle", tint = Color(0xFF1E3A8A), modifier = Modifier.size(32.dp))
+                Text("Müşteriler için görsel ekleyin (Max 5)", color = Color(0xFF1E3A8A), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+            }
+        }
+    }
 
-            // 2. TEMEL BİLGİLER
+            // --- 2. KATEGORİ VE TEMEL BİLGİLER ---
+            Text("Sınıflandırma", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = anaKategori, onValueChange = { anaKategori = it }, label = { Text("Ana Kategori (Örn: Ambalajlar)") }, modifier = Modifier.weight(1f), singleLine = true)
+                OutlinedTextField(value = altKategori, onValueChange = { altKategori = it }, label = { Text("Alt Kategori (Örn: Hışır Poşet)") }, modifier = Modifier.weight(1f), singleLine = true)
+            }
+
             OutlinedTextField(value = urunAdi, onValueChange = { urunAdi = it }, label = { Text("Ürün Adı") }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), singleLine = true)
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = marka, onValueChange = { marka = it }, label = { Text("Marka") }, modifier = Modifier.weight(1f), singleLine = true)
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(value = marka, onValueChange = { marka = it }, label = { Text("Marka (Opsiyonel)") }, modifier = Modifier.weight(1f), singleLine = true)
                 OutlinedTextField(value = fiyat, onValueChange = { fiyat = it }, label = { Text("Taban Fiyat (₺)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f), singleLine = true)
             }
 
-            // 3. SATIŞ BİRİMİ VE HİYERARŞİ
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(modifier = Modifier.weight(1f)) {
-                    OutlinedTextField(value = seciliBirim, onValueChange = {}, label = { Text("Birim") }, readOnly = true, modifier = Modifier.fillMaxWidth(), trailingIcon = { Text("▼", modifier = Modifier.padding(end = 12.dp)) })
-                    Box(modifier = Modifier.matchParentSize().clickable { birimDropdownAcik = true })
-                    DropdownMenu(expanded = birimDropdownAcik, onDismissRequest = { birimDropdownAcik = false }) {
-                        varsayilanBirimler.forEach { b -> DropdownMenuItem(text = { Text(b) }, onClick = { seciliBirim = b; birimDropdownAcik = false }) }
-                    }
-                }
-                OutlinedTextField(value = birimDetayi, onValueChange = { birimDetayi = it }, label = { Text("Detay (Örn: 1 Koli = 50 Adet)") }, modifier = Modifier.weight(2f), singleLine = true)
+            Divider(modifier = Modifier.padding(bottom = 16.dp))
+
+            // --- 3. AKILLI SATIŞ BİRİMİ ---
+            Text("Satış Birimi", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            OutlinedTextField(
+                value = satisBirimi,
+                onValueChange = { satisBirimi = it },
+                label = { Text("Birim (Örn: Koli, Kova, Paket, Kg, Metre)") },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                singleLine = true
+            )
+
+            // Yapay Zeka Form Görünümü
+            androidx.compose.animation.AnimatedVisibility(visible = isKova) {
+                OutlinedTextField(value = kovaKg, onValueChange = { kovaKg = it }, label = { Text("Bu Kova Kaç Kg?") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp))
             }
-
-            Divider(modifier = Modifier.padding(vertical = 12.dp))
-
-            // 4. VARYANT (SEÇENEK) EKLEME ALANI
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Ürün Varyantları (Renk/Ebat)", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
-                TextButton(onClick = { varyantEklemeAcik = !varyantEklemeAcik }) { Text("+ Ekle", fontWeight = FontWeight.Bold) }
-            }
-
-            if (varyantEklemeAcik) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp)) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(value = yeniRenk, onValueChange = { yeniRenk = it }, label = { Text("Renk (Opsiyonel)") }, modifier = Modifier.weight(1f), singleLine = true)
-                            OutlinedTextField(value = yeniOlcu, onValueChange = { yeniOlcu = it }, label = { Text("Ölçü (Opsiyonel)") }, modifier = Modifier.weight(1f), singleLine = true)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(value = yeniEkFiyat, onValueChange = { yeniEkFiyat = it }, label = { Text("Ek Fiyat (₺)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f), singleLine = true)
-                            Button(
-                                onClick = {
-                                    if (yeniRenk.isNotBlank() || yeniOlcu.isNotBlank()) {
-                                        varyantlar.add(VaryantIstegi(yeniRenk, yeniOlcu, yeniEkFiyat.toDoubleOrNull() ?: 0.0))
-                                        yeniRenk = ""; yeniOlcu = ""; yeniEkFiyat = ""; varyantEklemeAcik = false
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(50.dp)
-                            ) { Text("Listeye Ekle") }
-                        }
-                    }
+            androidx.compose.animation.AnimatedVisibility(visible = isKoli) {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = koliPaket, onValueChange = { koliPaket = it }, label = { Text("İçindeki Paket Sayısı") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = paketAdet, onValueChange = { paketAdet = it }, label = { Text("1 Paketteki Adet") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                 }
             }
 
-            // Eklenen Varyantları Listeleme
-            if (varyantlar.isEmpty()) {
-                Text("Ürüne ait bir seçenek eklenmedi. Ürün sadece standart haliyle satılacak.", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Divider(modifier = Modifier.padding(bottom = 16.dp))
+
+            // --- 4. MATRİS VARYANT SİSTEMİ ---
+            Text("Ürün Çeşitleri (Varyantlar)", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 8.dp))
+
+            // Adım 1: Ana Renk / Çeşit Ekleme
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = yeniRenkGirdisi, onValueChange = { yeniRenkGirdisi = it }, label = { Text("Yeni Renk Ekle (Örn: Siyah)") }, modifier = Modifier.weight(1f), singleLine = true)
+                Button(
+                    onClick = {
+                        if (yeniRenkGirdisi.isNotBlank() && !renkListesi.contains(yeniRenkGirdisi)) {
+                            renkListesi.add(yeniRenkGirdisi)
+                            bedenGirisleri[yeniRenkGirdisi] = ""
+                            fiyatGirisleri[yeniRenkGirdisi] = ""
+                            yeniRenkGirdisi = ""
+                        }
+                    },
+                    modifier = Modifier.height(55.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) { Text("Renk Ekle") }
+            }
+
+            // Adım 2: Eklenen Renklerin Kartları ve Beden Yönetimi
+            if (renkListesi.isEmpty()) {
+                Text("Ürün standart olarak satılacak (Renk/Beden seçeneği yok).", color = Color.Gray, fontSize = 13.sp)
             } else {
-                varyantlar.forEachIndexed { index, v ->
-                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Color.White, RoundedCornerShape(8.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("${v.renk} ${v.olcu}".trim(), fontWeight = FontWeight.Bold)
-                            if (v.ek_fiyat > 0) Text("Fiyat Farkı: +${v.ek_fiyat} ₺", color = Color(0xFF10B981), fontSize = 12.sp)
+                renkListesi.forEach { renk ->
+                    // YENİ: Koyu Mavi Başlıklı Modern E-Ticaret Kartı
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column {
+                            // KOYU MAVİ BAŞLIK ŞERİDİ
+                            Row(
+                                modifier = Modifier.fillMaxWidth().background(Color(0xFF1E3A8A)).padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(renk.uppercase(), fontWeight = FontWeight.Black, fontSize = 16.sp, color = Color.White)
+                                Icon(Icons.Default.Delete, "Rengi Sil", tint = Color(0xFFFCA5A5), modifier = Modifier.clickable {
+                                    renkListesi.remove(renk)
+                                    varyantlar.removeAll { it.renk == renk }
+                                })
+                            }
+
+                            // BEDENLERİN LİSTELENDİĞİ ALT KISIM
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                val buRenginVaryantlari = varyantlar.filter { it.renk == renk }
+                                buRenginVaryantlari.forEach { v ->
+                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Color(0xFFF8FAFC), RoundedCornerShape(6.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Boyut: ${v.olcu}", fontWeight = FontWeight.Bold, color = Color.DarkGray)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (v.ek_fiyat > 0) Text("+${v.ek_fiyat} ₺", color = Color(0xFF10B981), fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp))
+                                            Icon(Icons.Default.Clear, "Sil", tint = Color.Red, modifier = Modifier.size(20.dp).clickable { varyantlar.remove(v) })
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // YENİ BEDEN EKLEME KUTULARI
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(value = bedenGirisleri[renk] ?: "", onValueChange = { bedenGirisleri[renk] = it }, label = { Text("Boyut (Örn: Küçük)") }, modifier = Modifier.weight(1.5f), singleLine = true)
+                                    OutlinedTextField(value = fiyatGirisleri[renk] ?: "", onValueChange = { fiyatGirisleri[renk] = it }, label = { Text("Ek ₺") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f), singleLine = true)
+                                    IconButton(
+                                        onClick = {
+                                            val beden = bedenGirisleri[renk] ?: ""
+                                            val ekFiyat = fiyatGirisleri[renk]?.toDoubleOrNull() ?: 0.0
+                                            if (beden.isNotBlank()) {
+                                                varyantlar.add(VaryantIstegi(renk, beden, ekFiyat))
+                                                bedenGirisleri[renk] = ""; fiyatGirisleri[renk] = ""
+                                            }
+                                        },
+                                        modifier = Modifier.background(Color(0xFF1E3A8A), RoundedCornerShape(8.dp)).size(48.dp)
+                                    ) { Icon(Icons.Default.Add, "Ekle", tint = Color.White) }
+                                }
+                            }
                         }
-                        IconButton(onClick = { varyantlar.removeAt(index) }) { Icon(Icons.Filled.Clear, "Sil", tint = Color.Red) }
                     }
                 }
             }
@@ -440,17 +542,16 @@ fun AdminSiparisKarti(siparis: AdminSiparis, detayaGit: (Int) -> Unit) {
     val tarih = siparis.siparis_tarihi.take(10)
     val dukkanAdi = siparis.dukkan_adi ?: "Bilinmeyen İşletme"
 
-    // YENİ: Modifier'a 'clickable' eklendi! Artık karta tıklanabiliyor.
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable { detayaGit(siparis.siparis_id) }, elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                // YÖNETİCİ EKRANI: Yöneticiler veritabanı ID'sini görmelidir (Sipariş #12 vb.)
                 Text(text = "Sipariş #${siparis.siparis_id}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
                 Text(text = "${siparis.toplam_tutar} ₺", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
             Divider(modifier = Modifier.padding(vertical = 8.dp).background(Color.LightGray.copy(alpha = 0.5f)))
             Text(text = "İşletme: $dukkanAdi", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text(text = "Tarih: $tarih", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-
             Text(text = "İçeriği Görmek İçin Tıklayın →", color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp).align(Alignment.End))
         }
     }

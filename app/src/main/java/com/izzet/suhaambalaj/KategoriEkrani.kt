@@ -152,22 +152,21 @@ fun KategorilerEkrani(altKategoriyeGit: (Int, String) -> Unit) {
 @Composable
 fun KategoriAkordeonKarti(
     kategori: Kategori,
-    genisletildi: Boolean, // Artık durum içeriden değil, ana sayfadan geliyor
-    kartaTiklandi: () -> Unit, // Tıklanma komutu ana sayfaya gönderiliyor
+    genisletildi: Boolean,
+    kartaTiklandi: () -> Unit,
     altKategoriyeGit: (Int, String) -> Unit
 ) {
     var altKategoriler by remember { mutableStateOf<List<Kategori>>(emptyList()) }
     var altYukleniyor by remember { mutableStateOf(false) }
-    var verilerCekildiMi by remember { mutableStateOf(false) }
 
+    // ÇÖZÜM: Kategori her açıldığında (genisletildi == true) sunucuya GÜNCEL veriyi sorar
     LaunchedEffect(genisletildi) {
-        if (genisletildi && !verilerCekildiMi) {
+        if (genisletildi) {
             altYukleniyor = true
             try {
                 val cevap = ApiClient.retrofitService.altKategorileriGetir(kategori.id)
                 if (cevap.basarili && cevap.altKategoriler != null) {
                     altKategoriler = cevap.altKategoriler
-                    verilerCekildiMi = true
                 }
             } catch (e: Exception) {
                 println("Alt kategori çekme hatası: ${e.message}")
@@ -189,17 +188,8 @@ fun KategoriAkordeonKarti(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = kategori.kategori_adi,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Icon(
-                    imageVector = if (genisletildi) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Genişlet",
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Text(text = kategori.kategori_adi, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                Icon(imageVector = if (genisletildi) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = "Genişlet", tint = MaterialTheme.colorScheme.primary)
             }
 
             AnimatedVisibility(visible = genisletildi) {
@@ -211,12 +201,7 @@ fun KategoriAkordeonKarti(
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         }
                     } else if (altKategoriler.isEmpty()) {
-                        Text(
-                            text = "Bu kategoriye ait alt kategori bulunmamaktadır.",
-                            fontSize = 14.sp,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        Text("Bu kategoriye ait alt kategori bulunmamaktadır.", fontSize = 14.sp, color = Color.Gray, modifier = Modifier.padding(16.dp))
                     } else {
                         altKategoriler.forEach { altKategori ->
                             TextButton(
@@ -226,12 +211,7 @@ fun KategoriAkordeonKarti(
                             ) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.Gray)
-                                    Text(
-                                        text = altKategori.kategori_adi,
-                                        fontSize = 15.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(start = 12.dp)
-                                    )
+                                    Text(text = altKategori.kategori_adi, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp))
                                 }
                             }
                         }

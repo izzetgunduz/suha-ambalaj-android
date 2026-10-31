@@ -59,8 +59,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class SepetElemani(val urun: Urun, var miktar: Double, var secilenBirim: String, val secilenVaryant: Varyant? = null)
-
+// YENİ: profesyonelOzet parametresi eklendi
+data class SepetElemani(val urun: Urun, var miktar: Double, var secilenBirim: String, val secilenVaryant: Varyant? = null, val profesyonelOzet: String = "")
 @Composable
 fun AnaUygulamaEkrani() {
     var seciliSekme by remember { mutableIntStateOf(0) }
@@ -107,13 +107,15 @@ fun AnaUygulamaEkrani() {
                     urun = detayGosterilenUrun!!,
                     fiyatlarGizliMi = fiyatlarGizliMi,
                     geriyeDon = { detayGosterilenUrun = null },
-                    sepeteOnayla = { urun, miktar, secilenBirim, secilenVaryant ->
+                    // YENİ: 5. parametre olan "profesyonelOzet" de dahil edildi
+                    sepeteOnayla = { urun, miktar, secilenBirim, secilenVaryant, profesyonelOzet ->
                         val sepettekiUrun = sepetListesi.find { it.urun.id == urun.id && it.secilenBirim == secilenBirim && it.secilenVaryant?.id == secilenVaryant?.id }
                         if (sepettekiUrun != null) {
                             val index = sepetListesi.indexOf(sepettekiUrun)
                             sepetListesi[index] = sepettekiUrun.copy(miktar = sepettekiUrun.miktar + miktar)
                         } else {
-                            sepetListesi.add(SepetElemani(urun, miktar, secilenBirim, secilenVaryant))
+                            // YENİ: Yeni sepete eklerken profesyonelOzet metnini de kaydediyoruz
+                            sepetListesi.add(SepetElemani(urun, miktar, secilenBirim, secilenVaryant, profesyonelOzet))
                         }
                         // Sepete eklendikten sonra detay ekranını kapatıp vitrine dönüyoruz
                         detayGosterilenUrun = null

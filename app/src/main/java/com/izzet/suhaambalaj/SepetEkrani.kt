@@ -36,9 +36,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean, profilDuzenlemeyeGit: () -> Unit = {}) {    val coroutineScope = rememberCoroutineScope()
+fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean, profilDuzenlemeyeGit: () -> Unit = {}) {
+    val coroutineScope = rememberCoroutineScope()
     var siparisGonderiliyor by remember { mutableStateOf(false) }
     var siparisSonucu by remember { mutableStateOf("") }
+    var islemBasarili by remember { mutableStateOf(false) }
     var uyariPenceresiAcik by remember { mutableStateOf(false) }
     var uyariBasligi by remember { mutableStateOf("") }
     var uyariMesaji by remember { mutableStateOf("") }
@@ -55,29 +57,26 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
         } else {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 sepetListesi.toList().forEach { eleman ->
+
+                    val koliIciPaketSayisi = eleman.urun.koli_ici_paket ?: 1
+                    val bolen = if (eleman.secilenBirim == "Paket" && eleman.urun.urun_tipi == "Koli" && koliIciPaketSayisi > 0) koliIciPaketSayisi else 1
+
+                    val tabanFiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
+                    val ekFiyat = eleman.secilenVaryant?.ek_fiyat ?: 0.0
+                    val guncelBirimFiyat = (tabanFiyat + ekFiyat) / bolen
+
+                    // ÇÖZÜM: Marka isminin tekrarlanmasını önleyen temiz başlık formatı
+                    val renkStr = eleman.secilenVaryant?.renk?.let { if (it.isNotBlank()) "$it " else "" } ?: ""
+                    val olcuStr = eleman.secilenVaryant?.olcu?.let { if (it.isNotBlank()) "$it " else "" } ?: ""
+                    val temizUrunBasligi = "> $renkStr$olcuStr${eleman.urun.urun_adi}".trim()
+
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
 
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = eleman.urun.urun_adi, fontWeight = FontWeight.Bold)
-
-                            // YENİ EKLENEN: Varyant Bilgisini Sepette Gösterme
-                            if (eleman.secilenVaryant != null) {
-                                val renk = eleman.secilenVaryant?.renk ?: ""
-                                val olcu = eleman.secilenVaryant?.olcu ?: ""
-                                val varyantMetni = "$renk $olcu".trim()
-
-                                if (varyantMetni.isNotEmpty()) {
-                                    Text(text = "Seçim: $varyantMetni", color = Color.DarkGray, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp, bottom = 2.dp))
-                                }
-                            }
+                            Text(text = temizUrunBasligi, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
 
                             if (!fiyatlarGizliMi) {
-                                // Taban fiyata varsa varyantın ek fiyatını da ekleyip gösteriyoruz
-                                val tabanFiyat = eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0
-                                val ekFiyat = eleman.secilenVaryant?.ek_fiyat ?: 0.0
-                                val guncelFiyat = tabanFiyat + ekFiyat
-
-                                Text(text = "Birim Fiyatı: $guncelFiyat ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 14.sp)
+                                Text(text = "Birim Fiyatı: ${String.format(java.util.Locale.US, "%.2f", guncelBirimFiyat)} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                             }
                         }
 
@@ -86,8 +85,8 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 val guncelIndex = sepetListesi.indexOf(eleman)
                                 if (guncelIndex != -1) {
                                     if (eleman.miktar > 1) {
-                                        // HATA DÜZELTİLDİ: - işareti eklendi
-                                        sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar - 1)
+                                        // DÜZELTİLDİ: Eksik olan eksiltme işareti yerine doğru çıkarma işlemi eklendi
+                                        sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar - 1.0)
                                     } else {
                                         sepetListesi.removeAt(guncelIndex)
                                     }
@@ -108,7 +107,7 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                             IconButton(onClick = {
                                 val guncelIndex = sepetListesi.indexOf(eleman)
                                 if (guncelIndex != -1) {
-                                    sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar + 1)
+                                    sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar + 1.0)
                                 }
                             }) {
                                 Text(text = "+", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color(0xFF10B981))
@@ -135,8 +134,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                     coroutineScope.launch {
                         try {
                             val gercekMusteriId = sessionManager.musteriIdGetir()
-
-                            // YENİ: KASADAN GEÇMEDEN ÖNCE YÖNETİCİNİN KARARINI SORGULA
                             val durumCevap = ApiClient.retrofitService.musteriDurumuGetir(gercekMusteriId)
 
                             if (durumCevap.basarili) {
@@ -144,25 +141,47 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
 
                                 when (musteriDurumu) {
                                     "onayli" -> {
-                                        var toplamTutar = 0.0
+                                        // ÇÖZÜM: Toplam tutar artık sıfır gitmiyor, ürünlerin ara toplamlarından hesaplanıyor
+                                        var hesaplananToplamTutar = 0.0
+
                                         val detayListesi = sepetListesi.map { eleman ->
+                                            val koliIciPaketSayisi = eleman.urun.koli_ici_paket ?: 1
+                                            val bolen = if (eleman.secilenBirim == "Paket" && eleman.urun.urun_tipi == "Koli" && koliIciPaketSayisi > 0) koliIciPaketSayisi else 1
+
                                             val ekFiyat = eleman.secilenVaryant?.ek_fiyat ?: 0.0
-                                            val fiyat = (eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0) + ekFiyat
+                                            val fiyat = ((eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0) + ekFiyat) / bolen
                                             val araToplam = fiyat * eleman.miktar
-                                            toplamTutar += araToplam
 
-                                            val varyantMetni = if (eleman.secilenVaryant != null) "${eleman.secilenVaryant.renk ?: ""} ${eleman.secilenVaryant.olcu ?: ""}".trim() else null
+                                            hesaplananToplamTutar += araToplam // Toplam tutarı biriktiriyoruz
 
-                                            SiparisDetay(eleman.urun.id, eleman.miktar, fiyat, araToplam, eleman.secilenBirim ?: "", varyantMetni)
+                                            val renkStr = eleman.secilenVaryant?.renk?.trim() ?: ""
+                                            val olcuStr = eleman.secilenVaryant?.olcu?.trim() ?: ""
+                                            val kesinVaryant = "$renkStr $olcuStr".trim()
+
+                                            SiparisDetay(
+                                                urun_id = eleman.urun.id,
+                                                miktar = eleman.miktar,
+                                                birim_fiyati = fiyat,
+                                                ara_toplam = araToplam,
+                                                birim = eleman.secilenBirim ?: "",
+                                                varyant_bilgisi = if (kesinVaryant.isEmpty() || kesinVaryant == "null") null else kesinVaryant
+                                            )
                                         }
 
-                                        val cevap = ApiClient.retrofitService.siparisGonder(SiparisIstegi(gercekMusteriId, toplamTutar, detayListesi))
+                                        // Hesaplanan gerçek toplam tutar sunucuya iletiliyor
+                                        val cevap = ApiClient.retrofitService.siparisGonder(
+                                            SiparisIstegi(
+                                                musteri_id = gercekMusteriId,
+                                                toplam_tutar = hesaplananToplamTutar,
+                                                sepet_urunleri = detayListesi
+                                            )
+                                        )
 
                                         if (cevap.basarili) {
-                                            siparisSonucu = "Sipariş Başarıyla İletildi! ✓"
-                                            delay(2000)
+                                            islemBasarili = true
+                                            delay(1200)
                                             sepetListesi.clear()
-                                            siparisSonucu = ""
+                                            islemBasarili = false
                                         } else {
                                             siparisSonucu = "Hata: ${cevap.mesaj}"
                                         }
@@ -188,13 +207,18 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(55.dp).padding(top = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                enabled = !siparisGonderiliyor
-            ) { Text(if (siparisGonderiliyor) "Sipariş Mühürleniyor..." else "Siparişi İlet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                colors = ButtonDefaults.buttonColors(containerColor = if (islemBasarili) Color(0xFF10B981) else MaterialTheme.colorScheme.secondary),
+                enabled = !siparisGonderiliyor && !islemBasarili
+            ) {
+                Text(
+                    text = if (islemBasarili) "Sipariş Onaylandı ✓" else if (siparisGonderiliyor) "Sipariş Mühürleniyor..." else "Siparişi İlet",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 
-    // YENİ: DURUM UYARI PENCERESİ
     if (uyariPenceresiAcik) {
         AlertDialog(
             onDismissRequest = { uyariPenceresiAcik = false },
@@ -204,7 +228,7 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                 if (musteriDurumu == "engellendi") {
                     Button(onClick = {
                         uyariPenceresiAcik = false
-                        profilDuzenlemeyeGit() // Butona basılınca 5. sekmeye uçur!
+                        profilDuzenlemeyeGit()
                     }) { Text("Bilgilerimi Düzenle") }
                 }
             },
