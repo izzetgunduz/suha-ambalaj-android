@@ -92,6 +92,11 @@ data class MusteriOnayIstegi(
     val sebep: String? = null
 )
 
+// YENİ EKLENEN: Sadece Müşteri ID'sini Göndermek İçin Kullanılan İstek Kalıbı
+data class MusteriIdIstegi(
+    val musteri_id: Int
+)
+
 // 1. Müşteri Kayıt İstek/Cevap Kalıpları
 data class KayitIstegi(
     val dukkanAdi: String,
@@ -274,6 +279,10 @@ interface SuhaAmbalajApi {
 
     @GET("api/urunler/kategori/{kategori_id}")
     suspend fun kategoriUrunleriniGetir(@Path("kategori_id") kategoriId: Int): UrunCevap
+
+    // YENİ EKLENEN: Konum bariyerini geçebilenleri onay kuyruğuna atan köprü
+    @POST("/api/onay-kuyruguna-gir")
+    suspend fun onayKuyrugunaGir(@Body istek: MusteriIdIstegi): GenelCevap
 }
 
 object ApiClient {

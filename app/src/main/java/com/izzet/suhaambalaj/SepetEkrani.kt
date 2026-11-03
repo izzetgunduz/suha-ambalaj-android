@@ -1,5 +1,10 @@
 package com.izzet.suhaambalaj
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,8 +37,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @Composable
 fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean, profilDuzenlemeyeGit: () -> Unit = {}) {
@@ -48,6 +56,61 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
 
     val context = LocalContext.current
     val sessionManager = remember { SessionManager(context) }
+
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    val geocoder = remember { Geocoder(context, Locale("tr", "TR")) }
+
+    // KONUM SORGULAMA VE KARAR MERKEZİ (Dışarıya çıkarıldı)
+    fun konumSorgulaVeIsle() {
+        try {
+            siparisSonucu = "Konum doğrulanıyor..."
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    val adresler = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+                    val sehir = adresler?.get(0)?.adminArea?.lowercase() ?: ""
+                    val ilce = adresler?.get(0)?.subAdminArea?.lowercase() ?: ""
+
+                    if (sehir.contains("mardin") || ilce.contains("midyat")) {
+                        coroutineScope.launch {
+                            try {
+                                val onayCevap = ApiClient.retrofitService.onayKuyrugunaGir(MusteriIdIstegi(sessionManager.musteriIdGetir()))
+                                if (onayCevap.basarili) {
+                                    musteriDurumu = "bekliyor"
+                                    uyariBasligi = "Konum Doğrulandı ✓"
+                                    uyariMesaji = "Midyat/Mardin bölgesinde olduğunuz teyit edildi. Hesabınız yönetici onayına sunulmuştur. Onaylandıktan sonra siparişiniz işleme alınacaktır."
+                                    uyariPenceresiAcik = true
+                                    siparisSonucu = ""
+                                } else {
+                                    siparisSonucu = "Yönetici onay kuyruğuna alınamadı."
+                                }
+                            } catch (e: Exception) {
+                                siparisSonucu = "Bağlantı hatası."
+                            }
+                        }
+                    } else {
+                        uyariBasligi = "Bölge Dışı Hizmet"
+                        uyariMesaji = "Şu anda sadece Mardin ve Midyat bölgesindeki toptancı müşterilerimize hizmet verebiliyoruz. (Tespit Edilen Konum: ${sehir.uppercase()})"
+                        uyariPenceresiAcik = true
+                        siparisSonucu = ""
+                    }
+                } else {
+                    siparisSonucu = "Konum tespit edilemedi. Lütfen cihazınızın GPS (Konum) özelliğini açıp tekrar deneyin."
+                }
+            }
+        } catch (e: SecurityException) {
+            siparisSonucu = "Konum izni reddedildi."
+        }
+    }
+
+    val konumIzinIsteyici = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { izinVerildi ->
+        if (izinVerildi) {
+            konumSorgulaVeIsle()
+        } else {
+            siparisSonucu = "Sipariş vermek için konum izni vermelisiniz."
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Sepetim", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp, bottom = 16.dp))
@@ -65,7 +128,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                     val ekFiyat = eleman.secilenVaryant?.ek_fiyat ?: 0.0
                     val guncelBirimFiyat = (tabanFiyat + ekFiyat) / bolen
 
-                    // ÇÖZÜM: Marka isminin tekrarlanmasını önleyen temiz başlık formatı
                     val renkStr = eleman.secilenVaryant?.renk?.let { if (it.isNotBlank()) "$it " else "" } ?: ""
                     val olcuStr = eleman.secilenVaryant?.olcu?.let { if (it.isNotBlank()) "$it " else "" } ?: ""
                     val temizUrunBasligi = "> $renkStr$olcuStr${eleman.urun.urun_adi}".trim()
@@ -76,7 +138,7 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                             Text(text = temizUrunBasligi, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
 
                             if (!fiyatlarGizliMi) {
-                                Text(text = "Birim Fiyatı: ${String.format(java.util.Locale.US, "%.2f", guncelBirimFiyat)} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                                Text(text = "Birim Fiyatı: ${String.format(Locale.US, "%.2f", guncelBirimFiyat)} ₺", color = MaterialTheme.colorScheme.secondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                             }
                         }
 
@@ -85,7 +147,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 val guncelIndex = sepetListesi.indexOf(eleman)
                                 if (guncelIndex != -1) {
                                     if (eleman.miktar > 1) {
-                                        // DÜZELTİLDİ: Eksik olan eksiltme işareti yerine doğru çıkarma işlemi eklendi
                                         sepetListesi[guncelIndex] = eleman.copy(miktar = eleman.miktar - 1.0)
                                     } else {
                                         sepetListesi.removeAt(guncelIndex)
@@ -140,8 +201,17 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                 musteriDurumu = durumCevap.durum ?: "bekliyor"
 
                                 when (musteriDurumu) {
+                                    "misafir" -> {
+                                        siparisGonderiliyor = false
+                                        // Zaten izin verilmişse direkt konumu alır, verilmemişse izin ekranını fırlatır
+                                        val izinDurumu = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                                        if (izinDurumu == PackageManager.PERMISSION_GRANTED) {
+                                            konumSorgulaVeIsle()
+                                        } else {
+                                            konumIzinIsteyici.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                        }
+                                    }
                                     "onayli" -> {
-                                        // ÇÖZÜM: Toplam tutar artık sıfır gitmiyor, ürünlerin ara toplamlarından hesaplanıyor
                                         var hesaplananToplamTutar = 0.0
 
                                         val detayListesi = sepetListesi.map { eleman ->
@@ -152,7 +222,7 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                             val fiyat = ((eleman.urun.taban_fiyati.toDoubleOrNull() ?: 0.0) + ekFiyat) / bolen
                                             val araToplam = fiyat * eleman.miktar
 
-                                            hesaplananToplamTutar += araToplam // Toplam tutarı biriktiriyoruz
+                                            hesaplananToplamTutar += araToplam
 
                                             val renkStr = eleman.secilenVaryant?.renk?.trim() ?: ""
                                             val olcuStr = eleman.secilenVaryant?.olcu?.trim() ?: ""
@@ -168,7 +238,6 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                             )
                                         }
 
-                                        // Hesaplanan gerçek toplam tutar sunucuya iletiliyor
                                         val cevap = ApiClient.retrofitService.siparisGonder(
                                             SiparisIstegi(
                                                 musteri_id = gercekMusteriId,
@@ -185,23 +254,25 @@ fun SepetEkrani(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolea
                                         } else {
                                             siparisSonucu = "Hata: ${cevap.mesaj}"
                                         }
+                                        siparisGonderiliyor = false
                                     }
                                     "bekliyor" -> {
                                         uyariBasligi = "Hesabınız Onay Aşamasında"
                                         uyariMesaji = "Sipariş verebilmek için yönetici onayını beklemelisiniz. Uygulamayı incelemeye devam edebilirsiniz."
                                         uyariPenceresiAcik = true
+                                        siparisGonderiliyor = false
                                     }
                                     "engellendi" -> {
                                         uyariBasligi = "Sipariş Verilemiyor"
                                         val sebep = durumCevap.sebep ?: "Bilinmeyen bir sebep"
                                         uyariMesaji = "Hesabınız şu sebeple askıya alınmıştır:\n$sebep\n\nLütfen profil bilgilerinizi güncelleyerek tekrar onaya gönderin."
                                         uyariPenceresiAcik = true
+                                        siparisGonderiliyor = false
                                     }
                                 }
                             }
                         } catch (e: Exception) {
                             siparisSonucu = "Sunucuya bağlanılamadı!"
-                        } finally {
                             siparisGonderiliyor = false
                         }
                     }

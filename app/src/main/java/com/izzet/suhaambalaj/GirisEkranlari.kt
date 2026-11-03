@@ -148,23 +148,6 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
     var yukleniyor by remember { mutableStateOf(false) }
     var sonucMesaji by remember { mutableStateOf("") }
 
-    // YENİ: GPS Kontrol Araçları
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val fusedLocationClient = remember { com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context) }
-
-    // YENİ: Konum İzni İsteyici (Kilit Çözüldü)
-    val konumIzniIsteyici = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val izinVerildi = permissions.values.all { it }
-        yukleniyor = false // YÜKLENİYOR KİLİDİNİ AÇIYORUZ!
-        if (izinVerildi) {
-            sonucMesaji = "İzin onaylandı! Kayıt butonuna tekrar basın."
-        } else {
-            sonucMesaji = "Kayıt olmak için konum izni vermeniz zorunludur."
-        }
-    }
-
     Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Yeni Kayıt Oluştur", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(bottom = 24.dp))
 
@@ -203,61 +186,27 @@ fun KayitOlEkrani(geriyeDon: () -> Unit, basariliKayit: () -> Unit) {
         Button(
             onClick = {
                 yukleniyor = true
-                sonucMesaji = "Konum kontrol ediliyor..."
+                sonucMesaji = "Kayıt oluşturuluyor..."
 
-                // Konum izinleri kontrol ediliyor
-                val izinDurumu = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                coroutineScope.launch {
+                    try {
+                        // Yeni mimaride konum sormadığımız için koordinatları şimdilik sıfır (0.0) gönderiyoruz.
+                        // Zaten sipariş anında güncel konum alınıp kontrol edilecek.
+                        val istek = KayitIstegi(isyeriAdi, yetkiliAdi, "+90$telefon", sifre, 0.0, 0.0)
+                        val cevap = ApiClient.retrofitService.musteriKaydet(istek)
 
-                if (izinDurumu == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    // İzin varsa koordinatları çek
-                    fusedLocationClient.lastLocation.addOnSuccessListener { location: android.location.Location? ->
-                        if (location != null) {
-                            // Midyat Merkez Koordinatları
-                            val midyatEnlem = 37.4187
-                            val midyatBoylam = 41.3398
-
-                            // İki nokta arası mesafeyi ölçme (Metre cinsinden)
-                            val sonuclar = FloatArray(1)
-                            android.location.Location.distanceBetween(location.latitude, location.longitude, midyatEnlem, midyatBoylam, sonuclar)
-                            val uzaklikMetre = sonuclar[0]
-
-                            // 30 KM YARIÇAP KONTROLÜ (30,000 metre)
-                            if (uzaklikMetre <= 30000) {
-                                // Midyat sınırları içinde! Sunucuya gönder.
-                                coroutineScope.launch {
-                                    try {
-                                        val istek = KayitIstegi(isyeriAdi, yetkiliAdi, "+90$telefon", sifre, location.latitude, location.longitude)
-                                        val cevap = ApiClient.retrofitService.musteriKaydet(istek)
-
-                                        if (cevap.basarili) {
-                                            sonucMesaji = "Kayıt talebiniz alındı! Lütfen giriş yapınız."
-                                            kotlinx.coroutines.delay(2000)
-                                            geriyeDon()
-                                        } else {
-                                            sonucMesaji = cevap.mesaj
-                                        }
-                                    } catch (e: Exception) {
-                                        sonucMesaji = "Sunucuya bağlanılamadı!"
-                                    } finally {
-                                        yukleniyor = false
-                                    }
-                                }
-                            } else {
-                                // Kullanıcı Midyat sınırları dışında
-                                yukleniyor = false
-                                sonucMesaji = "Şu an için sadece Midyat ve çevresindeki işletmelere hizmet vermekteyiz."
-                            }
+                        if (cevap.basarili) {
+                            sonucMesaji = "Kayıt talebiniz alındı! Lütfen giriş yapınız."
+                            kotlinx.coroutines.delay(2000)
+                            geriyeDon()
                         } else {
-                            yukleniyor = false
-                            sonucMesaji = "Konumunuz bulunamadı. Lütfen cihazınızın GPS'ini açıp tekrar deneyin."
+                            sonucMesaji = cevap.mesaj
                         }
-                    }.addOnFailureListener {
+                    } catch (e: Exception) {
+                        sonucMesaji = "Sunucuya bağlanılamadı!"
+                    } finally {
                         yukleniyor = false
-                        sonucMesaji = "Konum alınırken bir hata oluştu."
                     }
-                } else {
-                    // İzin yoksa sistemden izin iste
-                    konumIzniIsteyici.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
                 }
             },
             modifier = Modifier.fillMaxWidth().height(55.dp),
