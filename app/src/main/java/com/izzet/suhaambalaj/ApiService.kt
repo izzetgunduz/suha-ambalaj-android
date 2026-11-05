@@ -1,11 +1,16 @@
 package com.izzet.suhaambalaj
 
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.POST
+import retrofit2.http.Part
+import retrofit2.http.PartMap
 import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 
@@ -17,18 +22,8 @@ data class VaryantIstegi(
     val stokta_var_mi: Boolean = true
 )
 
-// GÜNCELLENDİ: Artık varyant listesini de barındırıyor
-data class UrunEkleIstegi(
-    val kategori_id: Int,
-    val urun_adi: String,
-    val marka: String,
-    val satis_birimi: String,
-    val birim_detayi: String,
-    val taban_fiyati: String,
-    val fotograflar: List<String>?,
-    val stokta_var_mi: Boolean,
-    val varyantlar: List<VaryantIstegi>
-)
+// KALDIRILDI: UrunEkleIstegi (JSON + Base64 gövdesi). Ürün ekleme artık
+// multipart/form-data ile yapılıyor; alanlar @PartMap, fotoğraflar @Part ile gidiyor.
 data class UrunEkleCevabi(
     val basarili: Boolean,
     val mesaj: String,
@@ -123,7 +118,8 @@ data class GirisCevabi(
     val mesaj: String,
     val musteri_id: Int?,
     val yetkili_adi: String?,
-    val onay_durumu: String?
+    val onay_durumu: String?,
+    val rol: String? = null // YENİ: "admin" veya "musteri"
 )
 
 data class ProfilGuncelleIstegi(
@@ -148,6 +144,27 @@ data class KategoriCevap(
     val basarili: Boolean,
     val mesaj: String?,
     val kategoriler: List<Kategori>?
+)
+
+// YENİ: Kategori ağacı (modern kategori ekranı + ürün eklerken kategori önerileri)
+data class AltKategoriOzet(
+    val id: Int,
+    val kategori_adi: String,
+    val urun_sayisi: Int?
+)
+
+data class KategoriAgaci(
+    val id: Int,
+    val kategori_adi: String,
+    val urun_sayisi: Int?,
+    val kapak_fotograf: String?,
+    val alt_kategoriler: List<AltKategoriOzet>?
+)
+
+data class KategoriAgaciCevap(
+    val basarili: Boolean,
+    val mesaj: String?,
+    val kategoriler: List<KategoriAgaci>?
 )
 
 data class AltKategoriCevap(
@@ -262,8 +279,16 @@ interface SuhaAmbalajApi {
     @POST("/api/urun/stok-guncelle")
     suspend fun urunStokGuncelle(@Body istek: StokGuncelleIstegi): SunucuCevabi
 
+    // GÜNCELLENDİ: Base64 JSON yerine multipart/form-data
+    // alanlar   -> kategori_id, urun_adi, marka, satis_birimi, birim_detayi, taban_fiyati,
+    //              stokta_var_mi, urun_tipi, koli_ici_paket, paket_ici_adet, varyantlar (JSON metni)
+    // fotograflar -> "fotograflar" adlı dosya parçaları (en fazla 5)
+    @Multipart
     @POST("/api/urun-ekle")
-    suspend fun urunEkle(@Body istek: UrunEkleIstegi): UrunEkleCevabi
+    suspend fun urunEkle(
+        @PartMap alanlar: Map<String, @JvmSuppressWildcards RequestBody>,
+        @Part fotograflar: List<MultipartBody.Part>
+    ): UrunEkleCevabi
 
     @GET("api/musteri-durum/{id}")
     suspend fun musteriDurumuGetir(@Path("id") musteriId: Int): MusteriDurumCevap
@@ -277,6 +302,10 @@ interface SuhaAmbalajApi {
     @GET("api/kategoriler/alt/{ust_id}")
     suspend fun altKategorileriGetir(@Path("ust_id") ustId: Int): AltKategoriCevap
 
+    // YENİ: Ana kategoriler + alt kategoriler + ürün sayıları + kapak fotoğrafı
+    @GET("api/kategoriler/agac")
+    suspend fun kategoriAgaciniGetir(): KategoriAgaciCevap
+
     @GET("api/urunler/kategori/{kategori_id}")
     suspend fun kategoriUrunleriniGetir(@Path("kategori_id") kategoriId: Int): UrunCevap
 
@@ -288,9 +317,27 @@ interface SuhaAmbalajApi {
 object ApiClient {
     private const val BASE_URL = "http://64.226.125.60:3000/"
 
+    // YENİ: Fotoğraf yüklemesi yavaş mobil ağda 10 sn'lik varsayılanı aşabilir
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    // YENİ: Veritabanındaki "/uploads/urun_xxx.jpg" yolunu tam adrese çevirir (Coil AsyncImage için).
+    // Eski Base64 kayıtları ("data:image/...") Coil 2 tarafından açılamadığı için null döner (yer tutucu gösterilir).
+    fun gorselUrl(yol: String?): String? {
+        if (yol.isNullOrBlank() || yol.startsWith("data:")) return null
+        if (yol.startsWith("http")) return yol
+        return BASE_URL.trimEnd('/') + "/" + yol.trimStart('/')
+    }
+
     val retrofitService: SuhaAmbalajApi by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
+            .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SuhaAmbalajApi::class.java)

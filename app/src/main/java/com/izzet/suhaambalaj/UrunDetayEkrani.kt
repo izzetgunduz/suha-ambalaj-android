@@ -43,7 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun UrunDetayEkrani(
     urun: Urun,
@@ -119,8 +119,38 @@ fun UrunDetayEkrani(
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).verticalScroll(rememberScrollState())) {
-            Box(modifier = Modifier.fillMaxWidth().height(250.dp).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
-                Text("Ürün Görseli", color = Color.Gray, fontWeight = FontWeight.Bold)
+            // GÜNCELLENDİ: Ürün fotoğrafları kaydırılabilir galeri olarak gösteriliyor
+            val fotograflar = urun.fotograflar.orEmpty().mapNotNull { ApiClient.gorselUrl(it) }
+            Box(modifier = Modifier.fillMaxWidth().height(280.dp).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
+                if (fotograflar.isEmpty()) {
+                    Text("Ürün Görseli Yok", color = Color.Gray, fontWeight = FontWeight.Bold)
+                } else {
+                    val sayfaDurumu = androidx.compose.foundation.pager.rememberPagerState { fotograflar.size }
+                    androidx.compose.foundation.pager.HorizontalPager(state = sayfaDurumu, modifier = Modifier.fillMaxSize()) { sayfa ->
+                        coil.compose.AsyncImage(
+                            model = fotograflar[sayfa],
+                            contentDescription = urun.urun_adi,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    if (fotograflar.size > 1) {
+                        // Sayfa noktaları
+                        Row(
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
+                                .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(50))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            fotograflar.indices.forEach { i ->
+                                Box(
+                                    modifier = Modifier.height(7.dp).width(if (i == sayfaDurumu.currentPage) 18.dp else 7.dp)
+                                        .background(if (i == sayfaDurumu.currentPage) Color.White else Color.White.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                )
+                            }
+                        }
+                    }
+                }
             }
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(text = urun.urun_adi, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, modifier = Modifier.padding(bottom = 8.dp))

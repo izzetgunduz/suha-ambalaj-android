@@ -67,10 +67,11 @@ fun ProfilVeSiparisEkrani(detaylaraGit: (Int) -> Unit) {
     var girisYapildiMi by remember { mutableStateOf(sessionManager.girisYapildiMi()) }
     var aktifSayfa by remember { mutableStateOf("karsilama") }
 
-    val onayDurumu = sessionManager.onayDurumuGetir()
+    // GÜNCELLENDİ: Yönetici kontrolü artık "rol" bilgisine bakıyor
+    val yoneticiMi = sessionManager.yoneticiMi()
 
     if (girisYapildiMi) {
-        if (onayDurumu == "admin") {
+        if (yoneticiMi) {
             YoneticiPaneliEkrani(
                 cikisYap = {
                     sessionManager.cikisYap()
@@ -502,5 +503,3 @@ fun SiparisKarti(siparis: SiparisOzet, gosterilecekAd: String, detaylaraGit: () 
         }
     }
 }
-
-

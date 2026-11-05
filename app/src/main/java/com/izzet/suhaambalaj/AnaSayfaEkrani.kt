@@ -27,6 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,7 +42,8 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun AnaSayfaVitrini(sepetListesi: MutableList<SepetElemani>, fiyatlarGizliMi: Boolean, sepeteEkle: (Urun) -> Unit) {
     var aramaMetni by remember { mutableStateOf("") }
-    val kullaniciRol = SessionManager(LocalContext.current).onayDurumuGetir()
+    // GÜNCELLENDİ: Yönetici ise "admin", değilse "musteri" (ürün kartındaki buton buna göre gizleniyor)
+    val kullaniciRol = if (SessionManager(LocalContext.current).yoneticiMi()) "admin" else "musteri"
 
     // Eski Dialog değişkenleri (seciliUrun vb.) tamamen silindi
     var urunListesi by remember { mutableStateOf<List<Urun>>(emptyList()) }
@@ -132,8 +137,22 @@ fun UrunKarti(urun: Urun, fiyatlarGizliMi: Boolean, kullaniciRol: String, sepete
             modifier = Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color(0xFFF3F4F6)), contentAlignment = Alignment.Center) {
-                Text("Görsel", color = Color.Gray)
+            // GÜNCELLENDİ: Sunucudaki ilk ürün fotoğrafı gösteriliyor (yoksa yer tutucu)
+            val kapakUrl = urun.fotograflar.orEmpty().firstNotNullOfOrNull { ApiClient.gorselUrl(it) }
+            Box(
+                modifier = Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF3F4F6)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (kapakUrl != null) {
+                    AsyncImage(
+                        model = kapakUrl,
+                        contentDescription = urun.urun_adi,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text("Görsel yok", color = Color.Gray, fontSize = 12.sp)
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

@@ -8,11 +8,13 @@ class SessionManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("SuhaB2BOturum", Context.MODE_PRIVATE)
 
     // Müşteri doğru şifreyle girdiğinde bilgilerini kasaya kilitliyoruz
-    fun oturumuKaydet(musteriId: Int, yetkiliAdi: String, onayDurumu: String) {
+    // GÜNCELLENDİ: Rol (admin/musteri) da kaydediliyor
+    fun oturumuKaydet(musteriId: Int, yetkiliAdi: String, onayDurumu: String, rol: String = "musteri") {
         prefs.edit().apply {
             putInt("MUSTERI_ID", musteriId)
             putString("YETKILI_ADI", yetkiliAdi)
             putString("ONAY_DURUMU", onayDurumu)
+            putString("ROL", rol)
             putBoolean("GIRIS_YAPILDI", true)
             apply() // Mühürle
         }
@@ -26,6 +28,11 @@ class SessionManager(context: Context) {
     // Sepetten sipariş verirken "Bu siparişi kim veriyor?" sorusunun cevabı
     fun musteriIdGetir(): Int {
         return prefs.getInt("MUSTERI_ID", -1) // -1 demek kimse yok demek
+    }
+
+    // YENİ: Yönetici mi? (Eski oturumlar için onay_durumu="admin" de kabul edilir)
+    fun yoneticiMi(): Boolean {
+        return prefs.getString("ROL", null) == "admin" || onayDurumuGetir() == "admin"
     }
 
     fun onayDurumuGetir(): String {

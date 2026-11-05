@@ -63,8 +63,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.collections.forEach
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 @Composable
 fun UrunVeKatalogYonetimiEkrani(geriyeDon: () -> Unit) {
@@ -175,34 +181,34 @@ fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
 
     // 1. ÇOKLU FOTOĞRAF SİSTEMİ
+    // GÜNCELLENDİ: Seçim anında Base64'e çevirme döngüsü kaldırıldı. Sadece Uri'leri tutuyoruz;
+    // dosyalar "Kataloğa Kaydet"e basıldığında küçültülüp MultipartBody.Part olarak gönderiliyor.
     var secilenGorseller by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
-    var base64Gorseller by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val cokluGaleriSecici = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(5)
     ) { uriler ->
         if (uriler.isNotEmpty()) {
             secilenGorseller = uriler
-            coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val base64List = mutableListOf<String>()
-                uriler.forEach { uri ->
-                    try {
-                        val stream = context.contentResolver.openInputStream(uri)
-                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                        val outputStream = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, outputStream)
-                        val byteArray = outputStream.toByteArray()
-                        base64List.add("data:image/jpeg;base64," + android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP))
-                    } catch (e: Exception) { }
-                }
-                base64Gorseller = base64List
-            }
         }
     }
 
-    // 2. ÖZGÜR KATEGORİ SİSTEMİ
+    // 2. KATEGORİ SİSTEMİ
+    // GÜNCELLENDİ: Yazılan ana/alt kategori artık sunucuya gidiyor. Sunucu aynı isimde kategori
+    // varsa onu kullanıyor, yoksa oluşturuyor. Mevcut kategoriler aşağıda tıklanabilir öneri olarak çıkıyor.
     var anaKategori by remember { mutableStateOf("") }
     var altKategori by remember { mutableStateOf("") }
+    var kategoriAgaci by remember { mutableStateOf<List<KategoriAgaci>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        try {
+            val cevap = ApiClient.retrofitService.kategoriAgaciniGetir()
+            if (cevap.basarili) kategoriAgaci = cevap.kategoriler ?: emptyList()
+        } catch (e: Exception) { /* Öneriler gelmezse elle yazmaya devam edilebilir */ }
+    }
+
+    val eslesenAnaKategori = kategoriAgaci.firstOrNull { it.kategori_adi.equals(anaKategori.trim(), ignoreCase = true) }
+    val onerilenAltKategoriler = eslesenAnaKategori?.alt_kategoriler.orEmpty()
 
     // 3. TEMEL BİLGİLER
     var urunAdi by remember { mutableStateOf("") }
@@ -240,53 +246,120 @@ fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
         },
         bottomBar = {
             Surface(shadowElevation = 16.dp) {
-                Button(
-                    onClick = {
-                        val tabanFiyatD = fiyat.toDoubleOrNull()
-                        if (urunAdi.isNotBlank() && tabanFiyatD != null && anaKategori.isNotBlank()) {
-                            islemYapiliyor = true
-
-                            // Akıllı Birim Detayı Oluşturma
-                            val dinamikDetay = when {
-                                isKova -> "1 Kova = $kovaKg Kg"
-                                isKoli -> "1 Koli = $koliPaket Paket (${(koliPaket.toIntOrNull()?:0) * (paketAdet.toIntOrNull()?:0)} Adet)"
-                                else -> "Birim: $satisBirimi"
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    // YENİ: Hata mesajı artık butonun hemen üstünde; formun neresinde olursanız olun görünür
+                    if (hataMesaji.isNotEmpty()) {
+                        Surface(
+                            color = Color(0xFFFEE2E2),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                        ) {
+                            Text(hataMesaji, color = Color(0xFFB91C1C), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(12.dp))
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            hataMesaji = ""
+                            // "12,50" gibi virgüllü girişleri de kabul et
+                            val temizFiyat = fiyat.trim().replace(',', '.')
+                            val tabanFiyatD = temizFiyat.toDoubleOrNull()
+                            val eksikler = buildList {
+                                if (anaKategori.isBlank()) add("Ana Kategori")
+                                if (urunAdi.isBlank()) add("Ürün Adı")
+                                if (tabanFiyatD == null) add("geçerli bir Fiyat")
+                                if (satisBirimi.isBlank()) add("Satış Birimi")
                             }
+                            if (eksikler.isEmpty()) {
+                                islemYapiliyor = true
 
-                            // Kategori hiyerarşisini ürün adına veya API'ye yedirme
-                            // YENİ HALİ (Sadece saf ürün adını kaydeder)
-                            val finalUrunAdi = urunAdi.trim()
-                            coroutineScope.launch {
-                                try {
-                                    val istek = UrunEkleIstegi(
-                                        kategori_id = 1, // Not: Backend API'si Int bekliyorsa 1 gönderiyoruz, gerçekte Ana Kategori metnini kullanıyoruz
-                                        urun_adi = finalUrunAdi,
-                                        marka = marka,
-                                        satis_birimi = satisBirimi,
-                                        birim_detayi = dinamikDetay,
-                                        taban_fiyati = fiyat,
-                                        fotograflar = base64Gorseller,
-                                        stokta_var_mi = true,
-                                        varyantlar = varyantlar.toList()
-                                    )
-                                    val cevap = ApiClient.retrofitService.urunEkle(istek)
-                                    if (cevap.basarili) urunEklendi() else hataMesaji = cevap.mesaj
-                                } catch (e: Exception) {
-                                    hataMesaji = "Sunucuya bağlanılamadı. Fotoğraf boyutu büyük olabilir."
-                                } finally { islemYapiliyor = false }
-                            }
-                        } else { hataMesaji = "Ana Kategori, Ürün Adı ve Fiyat zorunludur." }
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(16.dp).height(55.dp),
-                    enabled = !islemYapiliyor,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                ) { Text(if (islemYapiliyor) "İşleniyor..." else "Kataloğa Kaydet", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                                // YENİ: Kutuya yazılıp "+" basılmamış boyutlar da kaybolmasın
+                                renkListesi.forEach { renk ->
+                                    val bekleyenBeden = bedenGirisleri[renk]?.trim().orEmpty()
+                                    if (bekleyenBeden.isNotEmpty() && varyantlar.none { it.renk == renk && it.olcu.equals(bekleyenBeden, ignoreCase = true) }) {
+                                        varyantlar.add(VaryantIstegi(renk, bekleyenBeden, fiyatGirisleri[renk]?.replace(',', '.')?.toDoubleOrNull() ?: 0.0))
+                                        bedenGirisleri[renk] = ""; fiyatGirisleri[renk] = ""
+                                    }
+                                }
+                                // YENİ: Boyutu olmayan renk de seçilebilir bir varyant olarak kaydedilsin
+                                val gonderilecekVaryantlar = varyantlar.toMutableList()
+                                renkListesi.forEach { renk ->
+                                    if (gonderilecekVaryantlar.none { it.renk == renk }) gonderilecekVaryantlar.add(VaryantIstegi(renk, "", 0.0))
+                                }
+
+                                // Akıllı Birim Detayı Oluşturma
+                                val dinamikDetay = when {
+                                    isKova -> "1 Kova = $kovaKg Kg"
+                                    isKoli -> "1 Koli = $koliPaket Paket (${(koliPaket.toIntOrNull()?:0) * (paketAdet.toIntOrNull()?:0)} Adet)"
+                                    else -> "Birim: $satisBirimi"
+                                }
+
+                                val finalUrunAdi = urunAdi.trim()
+                                coroutineScope.launch {
+                                    try {
+                                        // Metin alanları form-data parçalarına çevriliyor
+                                        val alanlar = mutableMapOf(
+                                            "ana_kategori" to metinParcasi(anaKategori.trim()),
+                                            "urun_adi" to metinParcasi(finalUrunAdi),
+                                            "marka" to metinParcasi(marka.trim()),
+                                            "satis_birimi" to metinParcasi(satisBirimi.trim()),
+                                            "birim_detayi" to metinParcasi(dinamikDetay),
+                                            "taban_fiyati" to metinParcasi(temizFiyat),
+                                            "stokta_var_mi" to metinParcasi("true"),
+                                            "urun_tipi" to metinParcasi(if (isKoli) "Koli" else satisBirimi.trim()),
+                                            "varyantlar" to metinParcasi(com.google.gson.Gson().toJson(gonderilecekVaryantlar))
+                                        )
+                                        if (altKategori.isNotBlank()) alanlar["alt_kategori"] = metinParcasi(altKategori.trim())
+                                        if (isKoli) {
+                                            alanlar["koli_ici_paket"] = metinParcasi((koliPaket.toIntOrNull() ?: 1).toString())
+                                            alanlar["paket_ici_adet"] = metinParcasi((paketAdet.toIntOrNull() ?: 0).toString())
+                                        }
+
+                                        // Fotoğraflar arka planda küçültülüp dosya parçasına çevriliyor
+                                        val fotografParcalari = withContext(Dispatchers.IO) {
+                                            secilenGorseller.mapIndexedNotNull { index, uri ->
+                                                gorseliMultipartaCevir(context, uri, index)
+                                            }
+                                        }
+
+                                        val cevap = ApiClient.retrofitService.urunEkle(alanlar, fotografParcalari)
+                                        if (cevap.basarili) {
+                                            android.widget.Toast.makeText(context, "Ürün kataloğa eklendi ✓", android.widget.Toast.LENGTH_SHORT).show()
+                                            urunEklendi()
+                                        } else {
+                                            hataMesaji = cevap.mesaj
+                                        }
+                                    } catch (e: retrofit2.HttpException) {
+                                        // YENİ: Sunucunun gönderdiği gerçek hata metnini göster (tahmin yerine)
+                                        val govde = try { e.response()?.errorBody()?.string().orEmpty() } catch (x: Exception) { "" }
+                                        android.util.Log.e("UrunEkle", "HTTP ${e.code()} -> $govde", e)
+                                        hataMesaji = sunucuHatasiniCoz(e.code(), govde)
+                                    } catch (e: java.net.SocketTimeoutException) {
+                                        android.util.Log.e("UrunEkle", "Zaman aşımı", e)
+                                        hataMesaji = "Sunucu zamanında cevap vermedi. Bağlantınızı kontrol edip tekrar deneyin."
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("UrunEkle", "Ürün eklenemedi", e)
+                                        hataMesaji = "Sunucuya bağlanılamadı: ${e.localizedMessage ?: e.javaClass.simpleName}"
+                                    } finally { islemYapiliyor = false }
+                                }
+                            } else { hataMesaji = "Lütfen doldurun: ${eksikler.joinToString(", ")}" }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(55.dp),
+                        enabled = !islemYapiliyor,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        if (islemYapiliyor) {
+                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                            Spacer(modifier = Modifier.size(10.dp))
+                            Text("Kaydediliyor...", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Text("Kataloğa Kaydet", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).verticalScroll(rememberScrollState()).padding(16.dp)) {
-
-            if (hataMesaji.isNotEmpty()) Text(hataMesaji, color = Color.Red, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
             // --- 1. ÇOKLU FOTOĞRAF GALERİSİ ---
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -307,27 +380,68 @@ fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
                     }
                 }
             }  else {
-        // YENİ: Koyu Mavi Çerçeveli, Açık Mavi Arka Planlı Şık Kutu
-        Surface(
-            modifier = Modifier.fillMaxWidth().height(100.dp).padding(bottom = 16.dp)
-                .clickable { cokluGaleriSecici.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFF0F8FF), // Ferah çok açık mavi
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF1E3A8A)) // Marka rengi koyu mavi çerçeve
-        ) {
-            // DOĞRUSU: mainAxisAlignment kelimesini silip yerine verticalArrangement yazıyoruz
-            Column(verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {                Icon(imageVector = Icons.Default.Add, contentDescription = "Ekle", tint = Color(0xFF1E3A8A), modifier = Modifier.size(32.dp))
-                Text("Müşteriler için görsel ekleyin (Max 5)", color = Color(0xFF1E3A8A), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                // YENİ: Koyu Mavi Çerçeveli, Açık Mavi Arka Planlı Şık Kutu
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(100.dp).padding(bottom = 16.dp)
+                        .clickable { cokluGaleriSecici.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF0F8FF), // Ferah çok açık mavi
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF1E3A8A)) // Marka rengi koyu mavi çerçeve
+                ) {
+                    // DOĞRUSU: mainAxisAlignment kelimesini silip yerine verticalArrangement yazıyoruz
+                    Column(verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {                Icon(imageVector = Icons.Default.Add, contentDescription = "Ekle", tint = Color(0xFF1E3A8A), modifier = Modifier.size(32.dp))
+                        Text("Müşteriler için görsel ekleyin (Max 5)", color = Color(0xFF1E3A8A), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                    }
+                }
             }
-        }
-    }
 
             // --- 2. KATEGORİ VE TEMEL BİLGİLER ---
             Text("Sınıflandırma", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = anaKategori, onValueChange = { anaKategori = it }, label = { Text("Ana Kategori (Örn: Ambalajlar)") }, modifier = Modifier.weight(1f), singleLine = true)
-                OutlinedTextField(value = altKategori, onValueChange = { altKategori = it }, label = { Text("Alt Kategori (Örn: Hışır Poşet)") }, modifier = Modifier.weight(1f), singleLine = true)
+            OutlinedTextField(
+                value = anaKategori,
+                onValueChange = { anaKategori = it },
+                label = { Text("Ana Kategori (Örn: Ambalajlar)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            // YENİ: Mevcut ana kategoriler tek dokunuşla seçilebilir
+            if (kategoriAgaci.isNotEmpty()) {
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    items(kategoriAgaci.size) { i ->
+                        val kat = kategoriAgaci[i]
+                        ModernFiltreButonu(metin = kat.kategori_adi, secili = kat.kategori_adi.equals(anaKategori.trim(), ignoreCase = true)) {
+                            if (!kat.kategori_adi.equals(anaKategori.trim(), ignoreCase = true)) altKategori = ""
+                            anaKategori = kat.kategori_adi
+                        }
+                    }
+                }
             }
+            Text(
+                text = if (anaKategori.isNotBlank() && eslesenAnaKategori == null) "Yeni ana kategori olarak oluşturulacak." else "Listede yoksa yazmanız yeterli, otomatik oluşturulur.",
+                fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            )
+
+            OutlinedTextField(
+                value = altKategori,
+                onValueChange = { altKategori = it },
+                label = { Text("Alt Kategori (Opsiyonel, Örn: Hışır Poşet)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            if (onerilenAltKategoriler.isNotEmpty()) {
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    items(onerilenAltKategoriler.size) { i ->
+                        val alt = onerilenAltKategoriler[i]
+                        ModernFiltreButonu(metin = alt.kategori_adi, secili = alt.kategori_adi.equals(altKategori.trim(), ignoreCase = true)) {
+                            altKategori = alt.kategori_adi
+                        }
+                    }
+                }
+            }
+            Text(
+                text = "Alt kategori boş bırakılırsa ürün doğrudan ana kategoride listelenir.",
+                fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            )
 
             OutlinedTextField(value = urunAdi, onValueChange = { urunAdi = it }, label = { Text("Ürün Adı") }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), singleLine = true)
             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -443,6 +557,75 @@ fun YeniUrunEkleEkrani(geriyeDon: () -> Unit, urunEklendi: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+// ===================================================================
+// YENİ: MULTIPART YARDIMCI FONKSİYONLARI
+// ===================================================================
+
+// YENİ: HTTP hata gövdesinden okunabilir mesaj çıkarır.
+// Eski server.js çalışıyorsa Express "Cannot destructure ... req.body" gibi bir HTML hata sayfası döner;
+// bu durumda sunucunun güncellenmesi gerektiğini açıkça söyleriz.
+private fun sunucuHatasiniCoz(kod: Int, govde: String): String {
+    // 1. Bizim API formatı: {"basarili":false,"mesaj":"..."}
+    val jsonMesaj = try {
+        com.google.gson.JsonParser.parseString(govde).asJsonObject.get("mesaj")?.asString
+    } catch (e: Exception) { null }
+    if (!jsonMesaj.isNullOrBlank()) return jsonMesaj
+
+    // 2. Express'in HTML hata sayfası: <pre> içindeki ilk satırı al
+    val duzMetin = Regex("<pre>(.*?)(<br>|</pre>)", RegexOption.DOT_MATCHES_ALL).find(govde)?.groupValues?.get(1)
+        ?.replace("&#39;", "'")?.replace("&quot;", "\"")?.trim()
+        ?: govde.replace(Regex("<[^>]+>"), " ").trim().take(160)
+
+    val eskiSunucu = duzMetin.contains("req.body", ignoreCase = true) || kod == 404
+    return if (eskiSunucu) {
+        "Sunucuda eski server.js çalışıyor (HTTP $kod). Yeni server.js'i yükleyip 'npm install multer' sonrası sunucuyu yeniden başlatın.\nDetay: $duzMetin"
+    } else {
+        "Sunucu hatası (HTTP $kod): ${duzMetin.ifBlank { "ayrıntı yok" }}"
+    }
+}
+
+// Düz metin alanını form-data parçasına çevirir
+private fun metinParcasi(deger: String): RequestBody =
+    deger.toRequestBody("text/plain".toMediaType())
+
+// Seçilen görseli en fazla 1280px'e küçültüp JPEG olarak "fotograflar" parçasına çevirir.
+// Okunamayan görsel atlanır (null döner), böylece tek bir bozuk dosya tüm kaydı engellemez.
+private fun gorseliMultipartaCevir(context: android.content.Context, uri: android.net.Uri, index: Int): MultipartBody.Part? {
+    return try {
+        val cozumleyici = context.contentResolver
+
+        // 1. Önce sadece boyutları oku (belleğe tam görseli yüklemeden)
+        val sinirlar = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cozumleyici.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, sinirlar) }
+
+        // 2. Uygun örnekleme oranıyla çöz (OutOfMemory riskini önler)
+        val enUzunKenar = maxOf(sinirlar.outWidth, sinirlar.outHeight)
+        var ornekleme = 1
+        while (enUzunKenar / (ornekleme * 2) >= 1280) ornekleme *= 2
+        val secenekler = android.graphics.BitmapFactory.Options().apply { inSampleSize = ornekleme }
+        val hamBitmap = cozumleyici.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, secenekler)
+        } ?: return null
+
+        // 3. Tam 1280px sınırına ölçekle
+        val oran = 1280f / maxOf(hamBitmap.width, hamBitmap.height)
+        val bitmap = if (oran < 1f) {
+            android.graphics.Bitmap.createScaledBitmap(hamBitmap, (hamBitmap.width * oran).toInt(), (hamBitmap.height * oran).toInt(), true)
+        } else hamBitmap
+
+        // 4. JPEG olarak sıkıştır ve parçayı oluştur
+        val cikti = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, cikti)
+        if (bitmap !== hamBitmap) hamBitmap.recycle()
+        bitmap.recycle()
+
+        val govde = cikti.toByteArray().toRequestBody("image/jpeg".toMediaType())
+        MultipartBody.Part.createFormData("fotograflar", "urun_$index.jpg", govde)
+    } catch (e: Exception) {
+        null
     }
 }
 

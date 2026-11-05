@@ -109,7 +109,8 @@ fun GirisYapEkrani(geriyeDon: () -> Unit, basariliGiris: () -> Unit) {
                             sessionManager.oturumuKaydet(
                                 musteriId = cevap.musteri_id ?: -1,
                                 yetkiliAdi = cevap.yetkili_adi ?: "",
-                                onayDurumu = cevap.onay_durumu ?: "bekliyor"
+                                onayDurumu = cevap.onay_durumu ?: "bekliyor",
+                                rol = cevap.rol ?: "musteri"
                             )
 
                             sonucMesaji = "Giriş Başarılı! Yönlendiriliyorsunuz..."
